@@ -1,0 +1,161 @@
+// Components: Callouts, Slides, Details/Summary
+
+// ── Callouts (Obsidian-style) ──
+.callout {
+  border-left: 4px solid $color-accent;
+  border-radius: 4px;
+  background: #f8f9fa;
+  margin: 1.5em 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.callout-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.6em 1em;
+  font-weight: 600;
+  font-size: 0.95rem;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.callout-icon {
+  font-size: 1.1em;
+}
+
+.callout-content {
+  padding: 0.6em 1em 0.8em;
+  font-size: 0.95rem;
+
+  > :first-child { margin-top: 0; }
+  > :last-child { margin-bottom: 0; }
+  p { margin-bottom: 0.5em; }
+}
+
+// Callout type colors
+.callout-note     { border-left-color: #448aff; .callout-title { color: #448aff; } }
+.callout-info     { border-left-color: #448aff; .callout-title { color: #448aff; } }
+.callout-tip,
+.callout-hint     { border-left-color: #00bfa5; .callout-title { color: #00bfa5; } }
+.callout-important{ border-left-color: #ff6d00; .callout-title { color: #ff6d00; } }
+.callout-warning,
+.callout-caution  { border-left-color: #ff9100; .callout-title { color: #ff9100; } }
+.callout-danger,
+.callout-error    { border-left-color: #ff5252; .callout-title { color: #ff5252; } }
+.callout-bug      { border-left-color: #ff5252; .callout-title { color: #ff5252; } }
+.callout-example  { border-left-color: #7c4dff; .callout-title { color: #7c4dff; } }
+.callout-quote,
+.callout-cite     { border-left-color: $color-muted; .callout-title { color: $color-muted; } }
+.callout-abstract,
+.callout-summary,
+.callout-tldr     { border-left-color: #00b8d4; .callout-title { color: #00b8d4; } }
+.callout-todo     { border-left-color: #448aff; .callout-title { color: #448aff; } }
+.callout-success,
+.callout-check,
+.callout-done     { border-left-color: #00c853; .callout-title { color: #00c853; } }
+.callout-question,
+.callout-help,
+.callout-faq      { border-left-color: #ff9100; .callout-title { color: #ff9100; } }
+.callout-failure,
+.callout-fail,
+.callout-missing  { border-left-color: #ff5252; .callout-title { color: #ff5252; } }
+
+// Foldable callouts (details/summary)
+details.callout {
+  summary.callout-title {
+    cursor: pointer;
+    list-style: none;
+
+    &::before {
+      content: '▶';
+      font-size: 0.7em;
+      margin-right: 0.3em;
+      transition: transform 0.2s;
+    }
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+  }
+
+  &[open] > summary.callout-title::before {
+    transform: rotate(90deg);
+  }
+}
+
+// ── Slide embed (iframe) ──
+.slide-embed {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin: 1.5em 0;
+  border: 1px solid $color-border;
+  border-radius: 4px;
+  overflow: hidden;
+
+  iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+}
+
+.slide-embed-43 {
+  aspect-ratio: 4 / 3;
+}
+
+// ── Details/Summary (generic collapsible) ──
+details:not(.callout) {
+  margin: 1.5em 0;
+  border: 1px solid $color-border;
+  border-radius: 4px;
+  overflow: hidden;
+
+  summary {
+    cursor: pointer;
+    padding: 0.6em 1em;
+    font-weight: 600;
+    background: #f8f8f8;
+
+    &:hover {
+      background: #f0f0f0;
+    }
+  }
+
+  > :not(summary) {
+    padding: 0 1em;
+  }
+
+  > p, > div {
+    padding: 0.5em 1em;
+  }
+}
+
+// ── Mermaid diagrams ──
+.mermaid {
+  margin: 1.5em 0;
+  text-align: center;
+
+  svg {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+// ── KaTeX overrides ──
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5em 0;
+}
+
+// ── highlight.js overrides ──
+.hljs {
+  background: #f4f4f4 !important;
+  border-radius: 4px;
+  padding: 1em !important;
+}
