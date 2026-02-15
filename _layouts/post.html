@@ -1,38 +1,40 @@
 ---
 layout: default
 ---
-<article class="post">
-  <header class="post-header">
-    <h1 class="post-title">{{ page.title }}</h1>
-    <time class="post-date" datetime="{{ page.date | date_to_xmlschema }}">
-      {{ page.date | date: "%Y-%m-%d" }}
-    </time>
-  </header>
-  <div class="post-content">
-    {{ content }}
-  </div>
-
-  {% if page.backlinks.size > 0 %}
-  <section class="backlinks">
-    <div class="backlinks-header">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-      <span>Links to this page</span>
-    </div>
-    <div class="backlinks-list">
-      {% for bl in page.backlinks %}
-      <a class="backlink-item" href="{{ bl.url | relative_url }}">{{ bl.title }}</a>
-      {% endfor %}
-    </div>
-  </section>
-  {% endif %}
-
-  <section class="graph-section">
+<article class="post post-with-graph">
+  <aside class="graph-section">
     <div class="graph-header">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
       <span>Graph view</span>
     </div>
     <div id="graph-container"></div>
-  </section>
+  </aside>
+
+  <div class="post-main">
+    <header class="post-header">
+      <h1 class="post-title">{{ page.title }}</h1>
+      <time class="post-date" datetime="{{ page.date | date_to_xmlschema }}">
+        {{ page.date | date: "%Y-%m-%d" }}
+      </time>
+    </header>
+    <div class="post-content">
+      {{ content }}
+    </div>
+
+    {% if page.backlinks.size > 0 %}
+    <section class="backlinks">
+      <div class="backlinks-header">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <span>Links to this page</span>
+      </div>
+      <div class="backlinks-list">
+        {% for bl in page.backlinks %}
+        <a class="backlink-item" href="{{ bl.url | relative_url }}">{{ bl.title }}</a>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  </div>
 </article>
 
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
@@ -164,6 +166,8 @@ layout: default
     docs.forEach(function(doc) {
       if (!doc || !doc.url) return;
       var path = norm(doc.url);
+      if (/\.(xml|txt|json|rss|atom)$/i.test(path)) return;
+      if (path === '/404' || path === '/404.html') return;
       if (!path || unique[path]) return;
       unique[path] = {
         url: path,
@@ -287,7 +291,7 @@ layout: default
     });
 
     var width = container.clientWidth || 400;
-    var height = 320;
+    var height = Math.max(260, container.clientHeight || 360);
 
     var svg = d3.select(container).append('svg')
       .attr('width', width)

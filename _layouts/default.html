@@ -25,17 +25,34 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github.min.css">
   <script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js"></script>
 
-  {% assign obsidian_docs = site.posts | concat: site.pages %}
   <script>
-    window.__obsidianDocs = [
-      {% for doc in obsidian_docs %}
-      {
+    window.__obsidianDocs = [];
+    (function() {
+      function addDoc(doc) {
+        if (!doc || !doc.url) return;
+        if (/\.(xml|txt|json|rss|atom)$/i.test(doc.url)) return;
+        window.__obsidianDocs.push(doc);
+      }
+
+      {% for doc in site.posts %}
+      addDoc({
         "slug": {{ doc.basename_without_ext | default: (doc.path | split: '/' | last | split: '.' | first) | jsonify }},
         "title": {{ doc.title | default: doc.name | default: doc.url | jsonify }},
         "url": {{ doc.url | relative_url | jsonify }}
-      }{% unless forloop.last %},{% endunless %}
+      });
       {% endfor %}
-    ];
+
+      {% for doc in site.pages %}
+      {% assign doc_ext = doc.path | split: '.' | last | downcase %}
+      {% if doc_ext == 'md' or doc_ext == 'markdown' or doc_ext == 'mkdown' or doc_ext == 'mkdn' or doc_ext == 'mkd' %}
+      addDoc({
+        "slug": {{ doc.basename_without_ext | default: (doc.path | split: '/' | last | split: '.' | first) | jsonify }},
+        "title": {{ doc.title | default: doc.name | default: doc.url | jsonify }},
+        "url": {{ doc.url | relative_url | jsonify }}
+      });
+      {% endif %}
+      {% endfor %}
+    })();
   </script>
 </head>
 <body>
@@ -311,6 +328,159 @@
     } else {
       apply();
     }
+  })();
+  </script>
+
+  <!-- Internal link hover preview (Obsidian-style page preview) -->
+  <script>
+  (function() {
+    if (window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches) return;
+
+    var root = document.querySelector('.post-content') || document.querySelector('.page-content');
+    if (!root) return;
+
+    var previewCache = new Map();
+    var popover = document.createElement('div');
+    popover.className = 'link-preview-popover';
+    popover.innerHTML = '<div class="link-preview-title"></div><div class="link-preview-excerpt"></div>';
+    document.body.appendChild(popover);
+
+    var titleEl = popover.querySelector('.link-preview-title');
+    var excerptEl = popover.querySelector('.link-preview-excerpt');
+    var hideTimer = null;
+    var showToken = 0;
+
+    function norm(url) {
+      if (!url) return null;
+      try {
+        var u = new URL(url, window.location.origin);
+        var path = (u.pathname || '/').replace(/\/+$/, '') || '/';
+        if (u.origin !== window.location.origin) return null;
+        if (/\.(xml|txt|json|rss|atom)$/i.test(path)) return null;
+        return path;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function positionPopover(anchor) {
+      var rect = anchor.getBoundingClientRect();
+      var gap = 10;
+      var width = popover.offsetWidth || 420;
+      var height = popover.offsetHeight || 260;
+
+      var left = rect.right + gap;
+      var top = rect.top - 6;
+      if (left + width > window.innerWidth - 8) {
+        left = rect.left - width - gap;
+      }
+      if (left < 8) left = 8;
+      if (top + height > window.innerHeight - 8) {
+        top = window.innerHeight - height - 8;
+      }
+      if (top < 8) top = 8;
+
+      popover.style.left = left + 'px';
+      popover.style.top = top + 'px';
+    }
+
+    function hidePreviewSoon() {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(function() {
+        popover.classList.remove('is-visible');
+      }, 120);
+    }
+
+    function extractPreview(html, path) {
+      var parsed = new DOMParser().parseFromString(html, 'text/html');
+      var titleNode = parsed.querySelector('.post-title') || parsed.querySelector('.page-title') || parsed.querySelector('h1');
+      var contentRoot = parsed.querySelector('.post-content') || parsed.querySelector('.page-content') || parsed.body;
+
+      var title = titleNode ? titleNode.textContent.trim() : path;
+      var excerpt = '';
+      if (contentRoot) {
+        var paras = contentRoot.querySelectorAll('p, li');
+        for (var i = 0; i < paras.length; i++) {
+          var t = (paras[i].textContent || '').replace(/\s+/g, ' ').trim();
+          if (t.length < 24) continue;
+          excerpt = t;
+          break;
+        }
+      }
+
+      return {
+        title: title || path,
+        excerpt: excerpt || 'No preview content available.'
+      };
+    }
+
+    async function loadPreview(path) {
+      if (previewCache.has(path)) return previewCache.get(path);
+      var pending = fetch(path, { credentials: 'same-origin' })
+        .then(function(resp) { return resp.ok ? resp.text() : ''; })
+        .then(function(html) {
+          if (!html) return { title: path, excerpt: 'Unable to load preview.' };
+          return extractPreview(html, path);
+        })
+        .catch(function() {
+          return { title: path, excerpt: 'Unable to load preview.' };
+        });
+      previewCache.set(path, pending);
+      return pending;
+    }
+
+    function findAnchor(node) {
+      while (node && node !== root) {
+        if (node.nodeType === 1 && node.tagName.toLowerCase() === 'a') return node;
+        node = node.parentNode;
+      }
+      return null;
+    }
+
+    root.addEventListener('mouseover', function(event) {
+      var anchor = findAnchor(event.target);
+      if (!anchor) return;
+
+      var href = anchor.getAttribute('href');
+      if (!href || href.charAt(0) === '#') return;
+      var path = norm(anchor.href);
+      var current = norm(window.location.href);
+      if (!path || path === current) return;
+
+      clearTimeout(hideTimer);
+      var token = ++showToken;
+      titleEl.textContent = 'Loading...';
+      excerptEl.textContent = '';
+      popover.classList.add('is-visible');
+      positionPopover(anchor);
+
+      loadPreview(path).then(function(preview) {
+        if (token !== showToken) return;
+        titleEl.textContent = preview.title;
+        excerptEl.textContent = preview.excerpt;
+        positionPopover(anchor);
+      });
+    });
+
+    root.addEventListener('mouseout', function(event) {
+      var anchor = findAnchor(event.target);
+      if (!anchor) return;
+      var to = event.relatedTarget;
+      if (to && popover.contains(to)) return;
+      hidePreviewSoon();
+    });
+
+    popover.addEventListener('mouseenter', function() {
+      clearTimeout(hideTimer);
+    });
+
+    popover.addEventListener('mouseleave', function() {
+      hidePreviewSoon();
+    });
+
+    window.addEventListener('scroll', function() {
+      popover.classList.remove('is-visible');
+    }, { passive: true });
   })();
   </script>
 
