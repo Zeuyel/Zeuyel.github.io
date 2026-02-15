@@ -1,13 +1,30 @@
 # Generates backlinks data and graph JSON for each page/post.
-# Scans raw markdown for [[wikilinks]] and standard markdown links,
+# Scans raw file content for [[wikilinks]] and standard markdown links,
 # builds a bidirectional link map, and injects backlinks into each document.
-# Also writes assets/js/graph-data.json for the interactive graph view.
+# Also creates a Jekyll Page for graph-data.json so it's included in output.
 
 require 'json'
 require 'fileutils'
 require 'uri'
 
 module Jekyll
+  # A generated page that outputs JSON (no layout)
+  class GraphDataPage < Page
+    def initialize(site, content)
+      @site = site
+      @base = site.source
+      @dir  = 'assets/js'
+      @name = 'graph-data.json'
+      self.data = { 'layout' => nil }
+      self.content = content
+      self.process(@name)
+    end
+
+    def render_with_liquid?
+      false
+    end
+  end
+
   class BacklinksGenerator < Generator
     safe true
     priority :low
@@ -44,7 +61,6 @@ module Jekyll
         if perm
           doc_lookup[perm] = doc
           doc_lookup[perm.chomp('/')] = doc
-          # Also without leading slash
           doc_lookup[perm.sub(/^\//, '')] = doc
           doc_lookup[perm.sub(/^\//, '').chomp('/')] = doc
         end
@@ -53,7 +69,7 @@ module Jekyll
       # Build forward links map: doc => [target_doc, ...]
       forward = {}
       all_docs.each do |doc|
-        forward[doc] = extract_links(doc, doc_lookup)
+        forward[doc] = extract_links(doc, doc_lookup, site)
       end
 
       # Build backlinks map: doc => [source_doc, ...]
@@ -75,7 +91,7 @@ module Jekyll
 
       # Generate graph data JSON
       nodes = []
-      links = []
+      links_arr = []
       doc_to_id = {}
 
       all_docs.each_with_index do |doc, i|
@@ -95,26 +111,27 @@ module Jekyll
         targets.each do |target_doc|
           target_id = doc_to_id[target_doc]
           next unless target_id
-          links << { source: source_id, target: target_id }
+          links_arr << { source: source_id, target: target_id }
         end
       end
 
-      graph_json = JSON.generate({ nodes: nodes, links: links })
+      graph_json = JSON.generate({ nodes: nodes, links: links_arr })
 
-      dir = File.join(site.source, 'assets', 'js')
-      FileUtils.mkdir_p(dir)
-      File.write(File.join(dir, 'graph-data.json'), graph_json)
-
-      # Ensure Jekyll copies the file
-      site.static_files << Jekyll::StaticFile.new(site, site.source, 'assets/js', 'graph-data.json')
+      # Add as a Jekyll Page so it's written to _site/assets/js/graph-data.json
+      site.pages << GraphDataPage.new(site, graph_json)
     end
 
     private
 
-    def extract_links(doc, doc_lookup)
-      # Read raw file to avoid interference from jekyll-wikirefs
-      # which may transform [[wikilinks]] before generators run
-      raw = File.read(doc.path, encoding: 'utf-8') rescue ''
+    def extract_links(doc, doc_lookup, site)
+      # Build full path to read raw file
+      full_path = if File.absolute_path?(doc.path)
+                    doc.path
+                  else
+                    File.join(site.source, doc.path)
+                  end
+
+      raw = File.read(full_path, encoding: 'utf-8') rescue ''
       # Strip YAML front matter
       raw = raw.sub(/\A---.*?---\s*/m, '')
 
