@@ -27,49 +27,15 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
-          bundler-cache: false
-
-      - name: Install dependencies
-        run: |
-          rm -f Gemfile.lock
-          bundle install
+          bundler-cache: true
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
       - name: Build with Jekyll
-        run: bundle exec jekyll build --trace
+        run: bundle exec jekyll build
         env:
           JEKYLL_ENV: production
-
-      - name: Debug build output
-        run: |
-          echo "=== _site structure ==="
-          find _site -name "*.html" | head -20
-          echo ""
-          echo "=== Graph data in demo post ==="
-          python3 -c "
-          import re
-          with open('_site/obsidian-features-demo/index.html', 'r') as f:
-              html = f.read()
-          # Check for graph data
-          m = re.search(r'var data = (.+?);', html)
-          if m:
-              print('GRAPH DATA FOUND:', m.group(1)[:200])
-          else:
-              print('NO GRAPH DATA FOUND')
-          # Check for unconverted wikilinks
-          wl = re.findall(r'\[\[[^\]]+\]\]', html)
-          if wl:
-              print('UNCONVERTED WIKILINKS:', wl[:5])
-          else:
-              print('All wikilinks converted OK')
-          # Check for backlinks
-          if 'backlink-item' in html:
-              print('BACKLINKS SECTION: present')
-          else:
-              print('BACKLINKS SECTION: missing')
-          "
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
