@@ -39,7 +39,8 @@
       addDoc({
         "slug": {{ doc.basename_without_ext | default: (doc.path | split: '/' | last | split: '.' | first) | jsonify }},
         "title": {{ doc.title | default: doc.name | default: doc.url | jsonify }},
-        "url": {{ doc.url | relative_url | jsonify }}
+        "url": {{ doc.url | relative_url | jsonify }},
+        "graph": {% if doc.graph == false %}false{% else %}true{% endif %}
       });
       {% endfor %}
 
@@ -49,7 +50,8 @@
       addDoc({
         "slug": {{ doc.basename_without_ext | default: (doc.path | split: '/' | last | split: '.' | first) | jsonify }},
         "title": {{ doc.title | default: doc.name | default: doc.url | jsonify }},
-        "url": {{ doc.url | relative_url | jsonify }}
+        "url": {{ doc.url | relative_url | jsonify }},
+        "graph": {% if doc.graph == true %}true{% else %}false{% endif %}
       });
       {% endif %}
       {% endfor %}
@@ -267,6 +269,16 @@
       });
     }
 
+    function hasSplitMathCells(cells) {
+      if (!cells || cells.length < 2) return false;
+      var rowText = Array.prototype.map.call(cells, function(cell) {
+        return (cell.textContent || '').trim();
+      }).join('|');
+      var dollars = (rowText.match(/\$/g) || []).length;
+      if (dollars < 2) return false;
+      return rowText.indexOf('|') !== -1 && /\$[^$]*\|[^$]*\$/.test(rowText);
+    }
+
     function replaceWikilinkTables(root) {
       root.querySelectorAll('table').forEach(function(table) {
         var rows = table.querySelectorAll('tr');
@@ -277,6 +289,7 @@
           var cells = row.querySelectorAll('td, th');
           if (!cells.length) return;
           if (hasSplitWikilinkCells(cells)) splitWiki = true;
+          if (hasSplitMathCells(cells)) splitWiki = true;
         });
 
         if (!splitWiki) return;
@@ -364,12 +377,28 @@
       replaceRawWikilinks(targetRoot);
     }
 
+    function rerenderMath(root) {
+      if (typeof renderMathInElement !== 'function') return;
+      renderMathInElement(root, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '\\[', right: '\\]', display: true },
+          { left: '$', right: '$', display: false },
+          { left: '\\(', right: '\\)', display: false }
+        ],
+        throwOnError: false
+      });
+    }
+
     window.__obsidianResolveWikilink = resolveWikilink;
     window.__obsidianFixWikilinks = fixWikilinks;
 
     var apply = function() {
       var target = document.querySelector('.post-content') || document.querySelector('.page-content');
-      if (target) fixWikilinks(target);
+      if (target) {
+        fixWikilinks(target);
+        rerenderMath(target);
+      }
     };
 
     if (document.readyState === 'loading') {

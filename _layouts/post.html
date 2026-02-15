@@ -165,6 +165,7 @@ layout: default
     var unique = {};
     docs.forEach(function(doc) {
       if (!doc || !doc.url) return;
+      if (doc.graph !== true) return;
       var path = norm(doc.url);
       if (/\.(xml|txt|json|rss|atom)$/i.test(path)) return;
       if (path === '/404' || path === '/404.html') return;

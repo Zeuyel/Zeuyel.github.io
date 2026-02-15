@@ -51,8 +51,9 @@ module Jekyll
       nodes = []
       links_arr = []
       id_map = {}
+      graph_docs = all_docs.select { |doc| graph_document?(doc) }
 
-      all_docs.each_with_index do |doc, i|
+      graph_docs.each_with_index do |doc, i|
         id_map[doc] = i
         lc = (forward[doc] || []).size + backlinks[doc].size
         nodes << { 'id' => i, 'name' => (doc.data['title'] || File.basename(doc.path, '.*')), 'url' => doc.url, 'val' => [lc, 1].max }
@@ -100,6 +101,12 @@ module Jekyll
                end
         MARKDOWN_EXTENSIONS.include?(File.extname(path.to_s).downcase)
       end
+    end
+
+    def graph_document?(doc)
+      return false if doc.data['graph'] == false
+      return true if doc.respond_to?(:collection) && doc.collection && doc.collection.label == 'posts'
+      doc.data['graph'] == true
     end
 
     def read_raw(doc, site)
