@@ -464,13 +464,15 @@
       if (target) {
         fixWikilinks(target);
         rerenderMath(target);
+        return true;
       }
+      return false;
     };
 
-    if (document.readyState === 'loading') {
+    // Run immediately so accidental markdown tables are fixed before KaTeX auto-render runs.
+    var applied = apply();
+    if (!applied && document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', apply);
-    } else {
-      apply();
     }
   })();
   </script>
