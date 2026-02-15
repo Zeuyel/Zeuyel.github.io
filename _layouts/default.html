@@ -349,6 +349,7 @@
 
         var wrapper = document.createElement('div');
         wrapper.className = 'wikilink-table-fix';
+        wrapper.setAttribute('data-needs-math-render', '1');
 
         rows.forEach(function(row) {
           var cells = row.querySelectorAll('td, th');
@@ -432,14 +433,26 @@
 
     function rerenderMath(root) {
       if (typeof renderMathInElement !== 'function') return;
-      renderMathInElement(root, {
-        delimiters: [
-          { left: '$$', right: '$$', display: true },
-          { left: '\\[', right: '\\]', display: true },
-          { left: '$', right: '$', display: false },
-          { left: '\\(', right: '\\)', display: false }
-        ],
-        throwOnError: false
+      var targets = [];
+      if (root && root.matches && root.matches('.wikilink-table-fix[data-needs-math-render="1"]')) {
+        targets.push(root);
+      }
+      if (root && root.querySelectorAll) {
+        targets = targets.concat(Array.prototype.slice.call(root.querySelectorAll('.wikilink-table-fix[data-needs-math-render="1"]')));
+      }
+      if (!targets.length) return;
+
+      targets.forEach(function(target) {
+        renderMathInElement(target, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '\\[', right: '\\]', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false }
+          ],
+          throwOnError: false
+        });
+        target.removeAttribute('data-needs-math-render');
       });
     }
 
