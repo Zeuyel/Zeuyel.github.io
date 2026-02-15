@@ -33,18 +33,38 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Build with Jekyll
-        run: bundle exec jekyll build --verbose 2>&1 | tail -50
+        run: bundle exec jekyll build --trace
         env:
           JEKYLL_ENV: production
 
-      - name: Debug graph data
+      - name: Debug build output
         run: |
-          echo "=== Checking _site for graph data ==="
-          grep -l "graph_data\|graph-data" _site/**/*.html 2>/dev/null | head -5 || echo "No graph data found in HTML"
-          echo "=== Sample post HTML (graph section) ==="
-          grep -A5 "var data" _site/obsidian-features-demo/index.html 2>/dev/null || echo "No inline data found"
-          echo "=== Check if wikilinks converted ==="
-          grep -c "\[\[" _site/obsidian-features-demo/index.html 2>/dev/null && echo "WIKILINKS STILL PRESENT" || echo "Wikilinks converted OK"
+          echo "=== _site structure ==="
+          find _site -name "*.html" | head -20
+          echo ""
+          echo "=== Graph data in demo post ==="
+          python3 -c "
+          import re
+          with open('_site/obsidian-features-demo/index.html', 'r') as f:
+              html = f.read()
+          # Check for graph data
+          m = re.search(r'var data = (.+?);', html)
+          if m:
+              print('GRAPH DATA FOUND:', m.group(1)[:200])
+          else:
+              print('NO GRAPH DATA FOUND')
+          # Check for unconverted wikilinks
+          wl = re.findall(r'\[\[[^\]]+\]\]', html)
+          if wl:
+              print('UNCONVERTED WIKILINKS:', wl[:5])
+          else:
+              print('All wikilinks converted OK')
+          # Check for backlinks
+          if 'backlink-item' in html:
+              print('BACKLINKS SECTION: present')
+          else:
+              print('BACKLINKS SECTION: missing')
+          "
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

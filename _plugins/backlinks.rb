@@ -115,14 +115,23 @@ module Jekyll
     private
 
     def extract_links(doc, doc_lookup, site)
-      path = doc.path
-      path = File.join(site.source, path) unless File.absolute_path?(path)
+      # Try multiple path strategies to find the raw file
+      candidates = [
+        doc.path,
+        File.join(site.source, doc.path),
+        doc.respond_to?(:site) ? File.join(doc.site.source, doc.relative_path) : nil
+      ].compact
 
-      raw = ''
-      begin
-        raw = File.read(path, encoding: 'utf-8')
-      rescue => e
-        Jekyll.logger.warn "Backlinks:", "Cannot read #{path}: #{e.message}"
+      raw = nil
+      candidates.each do |p|
+        if File.exist?(p)
+          raw = File.read(p, encoding: 'utf-8')
+          break
+        end
+      end
+
+      unless raw
+        Jekyll.logger.warn "Backlinks:", "File not found for #{doc.path} (tried: #{candidates.join(', ')})"
         return []
       end
 
