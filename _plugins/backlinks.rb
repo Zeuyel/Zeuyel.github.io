@@ -182,19 +182,46 @@ def obsidian_preprocess(doc)
   lookup = Jekyll::BacklinksGenerator.wikilink_lookup
 
   content = doc.content
-  placeholders = []
+  code_placeholders = []
+  math_placeholders = {}
+  math_index = 0
+
+  next_math_token = lambda do
+    token = "@@OB_MATH_#{math_index}@@"
+    math_index += 1
+    token
+  end
 
   # Protect fenced code blocks
-  content = content.gsub(/^```.*?^```/m) { |b| placeholders << b; "\x00PH#{placeholders.size - 1}\x00" }
-
-  # Protect display math $$...$$
-  content = content.gsub(/\$\$.*?\$\$/m) { |b| placeholders << b; "\x00PH#{placeholders.size - 1}\x00" }
-
-  # Protect inline math $...$
-  content = content.gsub(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/) { |b| placeholders << b; "\x00PH#{placeholders.size - 1}\x00" }
+  content = content.gsub(/^```.*?^```/m) { |b| code_placeholders << b; "\x00CPH#{code_placeholders.size - 1}\x00" }
+  content = content.gsub(/^~~~.*?^~~~/m) { |b| code_placeholders << b; "\x00CPH#{code_placeholders.size - 1}\x00" }
 
   # Protect inline code `...`
-  content = content.gsub(/`[^`\n]+`/) { |b| placeholders << b; "\x00PH#{placeholders.size - 1}\x00" }
+  content = content.gsub(/`[^`\n]+`/) { |b| code_placeholders << b; "\x00CPH#{code_placeholders.size - 1}\x00" }
+
+  # Protect display math and inline math with persistent placeholders.
+  # They will be restored after markdown conversion to avoid accidental table parsing on "|...|" math.
+  content = content.gsub(/\$\$.*?\$\$/m) do |b|
+    token = next_math_token.call
+    math_placeholders[token] = b
+    token
+  end
+  content = content.gsub(/\\\[(?:.|\n)*?\\\]/m) do |b|
+    token = next_math_token.call
+    math_placeholders[token] = b
+    token
+  end
+
+  content = content.gsub(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/) do |b|
+    token = next_math_token.call
+    math_placeholders[token] = b
+    token
+  end
+  content = content.gsub(/\\\((?:.|\n)*?\\\)/m) do |b|
+    token = next_math_token.call
+    math_placeholders[token] = b
+    token
+  end
 
   # Convert [[target|display]] to [display](url)
   content = content.gsub(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/) do
@@ -208,9 +235,24 @@ def obsidian_preprocess(doc)
     end
   end
 
-  # Restore
-  content = content.gsub(/\x00PH(\d+)\x00/) { placeholders[$1.to_i] }
+  # Restore code placeholders before markdown conversion.
+  content = content.gsub(/\x00CPH(\d+)\x00/) { code_placeholders[$1.to_i] }
+
+  # Keep math placeholders until :post_convert (store map in doc data).
+  doc.data['__obsidian_math_placeholders'] = math_placeholders unless math_placeholders.empty?
   doc.content = content
+end
+
+def obsidian_restore_math(doc)
+  return unless doc.output
+  placeholders = doc.data.delete('__obsidian_math_placeholders')
+  return unless placeholders && !placeholders.empty?
+
+  output = doc.output
+  placeholders.each do |token, math|
+    output = output.gsub(token, math)
+  end
+  doc.output = output
 end
 
 Jekyll::Hooks.register :documents, :pre_render, priority: :highest do |doc|
@@ -219,4 +261,12 @@ end
 
 Jekyll::Hooks.register :pages, :pre_render, priority: :highest do |page|
   obsidian_preprocess(page)
+end
+
+Jekyll::Hooks.register :documents, :post_convert, priority: :lowest do |doc|
+  obsidian_restore_math(doc)
+end
+
+Jekyll::Hooks.register :pages, :post_convert, priority: :lowest do |page|
+  obsidian_restore_math(page)
 end
