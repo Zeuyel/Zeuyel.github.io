@@ -9,9 +9,10 @@ module Jekyll
   class BacklinksGenerator < Generator
     safe true
     priority :low
+    MARKDOWN_EXTENSIONS = %w[.md .markdown .mkdown .mkdn .mkd].freeze
 
     def generate(site)
-      all_docs = site.posts.docs + site.pages.select { |p| p.ext == '.md' }
+      all_docs = collect_markdown_docs(site)
 
       Jekyll.logger.info "Backlinks:", "Processing #{all_docs.size} documents"
 
@@ -86,6 +87,21 @@ module Jekyll
 
     private
 
+    def collect_markdown_docs(site)
+      docs = []
+      docs.concat(site.pages)
+      site.collections.each_value { |collection| docs.concat(collection.docs) }
+
+      docs.uniq.select do |doc|
+        path = if doc.respond_to?(:relative_path) && doc.relative_path
+                 doc.relative_path
+               else
+                 doc.path
+               end
+        MARKDOWN_EXTENSIONS.include?(File.extname(path.to_s).downcase)
+      end
+    end
+
     def read_raw(doc, site)
       # doc.path in Jekyll can be relative or absolute
       paths_to_try = [doc.path]
@@ -104,16 +120,17 @@ module Jekyll
 
     def find_targets(raw, doc, doc_lookup)
       targets = []
+      text = strip_protected_content(raw)
 
       # [[wikilinks]]
-      raw.scan(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/) do
+      text.scan(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/) do
         key = $1.strip
         t = doc_lookup[key] || doc_lookup[key.downcase]
         targets << t if t && t != doc
       end
 
       # Standard [text](url) links
-      raw.scan(/\[[^\]]*\]\(([^)]+)\)/) do
+      text.scan(/\[[^\]]*\]\(([^)]+)\)/) do
         href = $1
         next if href.start_with?('http', '#', 'mailto:')
         t = doc_lookup[href] || doc_lookup[href.chomp('/')]
@@ -121,6 +138,16 @@ module Jekyll
       end
 
       targets.uniq
+    end
+
+    def strip_protected_content(raw)
+      content = raw.dup
+      content = content.gsub(/^```.*?^```[ \t]*\n?/m, "\n")
+      content = content.gsub(/^~~~.*?^~~~[ \t]*\n?/m, "\n")
+      content = content.gsub(/\$\$.*?\$\$/m, '')
+      content = content.gsub(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/, '')
+      content = content.gsub(/`[^`\n]+`/, '')
+      content
     end
   end
 end
@@ -130,7 +157,6 @@ end
 def obsidian_preprocess(doc)
   return unless doc.content
   lookup = Jekyll::BacklinksGenerator.wikilink_lookup
-  return if lookup.empty?
 
   content = doc.content
   placeholders = []
@@ -143,6 +169,9 @@ def obsidian_preprocess(doc)
 
   # Protect inline math $...$
   content = content.gsub(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/) { |b| placeholders << b; "\x00PH#{placeholders.size - 1}\x00" }
+
+  # Protect inline code `...`
+  content = content.gsub(/`[^`\n]+`/) { |b| placeholders << b; "\x00PH#{placeholders.size - 1}\x00" }
 
   # Convert [[target|display]] to [display](url)
   content = content.gsub(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/) do
