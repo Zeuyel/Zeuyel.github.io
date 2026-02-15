@@ -112,13 +112,17 @@ module Jekyll
     private
 
     def extract_links(doc, doc_lookup)
-      content = doc.content || ''
+      # Read raw file to avoid interference from jekyll-wikirefs
+      # which may transform [[wikilinks]] before generators run
+      raw = File.read(doc.path, encoding: 'utf-8') rescue ''
+      # Strip YAML front matter
+      raw = raw.sub(/\A---.*?---\s*/m, '')
+
       targets = []
 
       # Match [[wikilinks]] — [[target]] or [[target|display]]
-      content.scan(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/).each do |match|
+      raw.scan(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/).each do |match|
         target_key = match[0].strip
-        # Try lookup by exact key, then downcase, then just the last part after /
         target_doc = doc_lookup[target_key] ||
                      doc_lookup[target_key.downcase] ||
                      doc_lookup[File.basename(target_key).downcase]
@@ -126,7 +130,7 @@ module Jekyll
       end
 
       # Match standard markdown links [text](/url)
-      content.scan(/\[([^\]]*)\]\(([^)]+)\)/).each do |_text, href|
+      raw.scan(/\[([^\]]*)\]\(([^)]+)\)/).each do |_text, href|
         next if href.start_with?('http', '#', 'mailto:')
         target_doc = doc_lookup[href] || doc_lookup[href.chomp('/')]
         targets << target_doc if target_doc && target_doc != doc
