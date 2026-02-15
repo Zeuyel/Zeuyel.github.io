@@ -42,156 +42,144 @@ layout: default
   var container = document.getElementById('graph-container');
   if (!container) return;
 
+  // Graph data is inlined by Jekyll from backlinks.rb — no fetch needed
+  var data = {{ page.graph_data | jsonify }};
+
+  if (!data || !data.nodes || !data.nodes.length) {
+    container.innerHTML = '<p class="graph-empty">No graph data</p>';
+    return;
+  }
+
   function norm(url) {
     try { url = decodeURIComponent(url); } catch(e) {}
     return url.replace(/\/+$/, '') || '/';
   }
 
   var currentNorm = norm(currentUrl);
+  var currentIdx = -1;
+  data.nodes.forEach(function(n, i) {
+    if (norm(n.url) === currentNorm) currentIdx = i;
+  });
+  if (currentIdx === -1) {
+    data.nodes.forEach(function(n, i) {
+      if (currentNorm.indexOf(norm(n.url)) !== -1 || norm(n.url).indexOf(currentNorm) !== -1)
+        currentIdx = i;
+    });
+  }
 
-  fetch({{ '/assets/js/graph-data.json' | relative_url | jsonify }})
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
+  var nodes = data.nodes;
+  var links = data.links || [];
+
+  if (nodes.length < 2 || links.length === 0) {
+    container.innerHTML = '<p class="graph-empty">No connections yet</p>';
+    return;
+  }
+
+  // Build adjacency for hover highlighting
+  var adj = {};
+  nodes.forEach(function(n) { adj[n.id] = new Set(); });
+  links.forEach(function(l) {
+    var s = typeof l.source === 'object' ? l.source.id : l.source;
+    var t = typeof l.target === 'object' ? l.target.id : l.target;
+    if (adj[s]) adj[s].add(t);
+    if (adj[t]) adj[t].add(s);
+  });
+
+  var width = container.clientWidth || 400;
+  var height = 320;
+
+  var svg = d3.select(container).append('svg')
+    .attr('width', width)
+    .attr('height', height)
+    .attr('viewBox', [0, 0, width, height]);
+
+  svg.append('defs').append('marker')
+    .attr('id', 'arrow')
+    .attr('viewBox', '0 -3 6 6')
+    .attr('refX', 14).attr('refY', 0)
+    .attr('markerWidth', 4).attr('markerHeight', 4)
+    .attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-3L6,0L0,3').attr('fill', '#999').attr('opacity', 0.4);
+
+  var linkG = svg.append('g');
+  var nodeG = svg.append('g');
+
+  var simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(function(d) { return d.id; }).distance(90))
+    .force('charge', d3.forceManyBody().strength(-180))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide().radius(25))
+    .force('x', d3.forceX(width / 2).strength(0.05))
+    .force('y', d3.forceY(height / 2).strength(0.05));
+
+  var link = linkG.selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('class', 'graph-link')
+    .attr('marker-end', 'url(#arrow)');
+
+  var node = nodeG.selectAll('g')
+    .data(nodes)
+    .join('g')
+    .attr('class', function(d, i) {
+      return 'graph-node' + (i === currentIdx ? ' graph-node-current' : '');
     })
-    .then(function(data) {
-      if (!data || !data.nodes || !data.nodes.length) {
-        container.innerHTML = '<p class="graph-empty">No graph data</p>';
-        return;
+    .style('cursor', 'pointer')
+    .on('click', function(event, d) {
+      if (d.url && d.id !== (currentIdx >= 0 ? nodes[currentIdx].id : -1)) {
+        window.location.href = d.url;
       }
-
-      // Find current node
-      var currentIdx = -1;
-      data.nodes.forEach(function(n, i) {
-        if (norm(n.url) === currentNorm) currentIdx = i;
+    })
+    .on('mouseenter', function(event, d) {
+      var connected = adj[d.id] || new Set();
+      node.classed('graph-node-dim', function(n) {
+        return n.id !== d.id && !connected.has(n.id);
       });
-      if (currentIdx === -1) {
-        data.nodes.forEach(function(n, i) {
-          if (currentNorm.indexOf(norm(n.url)) !== -1 || norm(n.url).indexOf(currentNorm) !== -1)
-            currentIdx = i;
-        });
-      }
-
-      var nodes = data.nodes;
-      var links = data.links || [];
-
-      if (nodes.length < 2 || links.length === 0) {
-        container.innerHTML = '<p class="graph-empty">No connections yet</p>';
-        return;
-      }
-
-      // Build adjacency for hover highlighting
-      var adj = {};
-      nodes.forEach(function(n) { adj[n.id] = new Set(); });
-      links.forEach(function(l) {
+      link.classed('graph-link-dim', function(l) {
         var s = typeof l.source === 'object' ? l.source.id : l.source;
         var t = typeof l.target === 'object' ? l.target.id : l.target;
-        if (adj[s]) adj[s].add(t);
-        if (adj[t]) adj[t].add(s);
+        return s !== d.id && t !== d.id;
       });
-
-      var width = container.clientWidth || 400;
-      var height = 320;
-
-      var svg = d3.select(container).append('svg')
-        .attr('width', width)
-        .attr('height', height)
-        .attr('viewBox', [0, 0, width, height]);
-
-      // Arrow marker
-      svg.append('defs').append('marker')
-        .attr('id', 'arrow')
-        .attr('viewBox', '0 -3 6 6')
-        .attr('refX', 14).attr('refY', 0)
-        .attr('markerWidth', 4).attr('markerHeight', 4)
-        .attr('orient', 'auto')
-        .append('path').attr('d', 'M0,-3L6,0L0,3').attr('fill', '#999').attr('opacity', 0.4);
-
-      var linkG = svg.append('g');
-      var nodeG = svg.append('g');
-
-      var simulation = d3.forceSimulation(nodes)
-        .force('link', d3.forceLink(links).id(function(d) { return d.id; }).distance(90))
-        .force('charge', d3.forceManyBody().strength(-180))
-        .force('center', d3.forceCenter(width / 2, height / 2))
-        .force('collision', d3.forceCollide().radius(25))
-        .force('x', d3.forceX(width / 2).strength(0.05))
-        .force('y', d3.forceY(height / 2).strength(0.05));
-
-      var link = linkG.selectAll('line')
-        .data(links)
-        .join('line')
-        .attr('class', 'graph-link')
-        .attr('marker-end', 'url(#arrow)');
-
-      var node = nodeG.selectAll('g')
-        .data(nodes)
-        .join('g')
-        .attr('class', function(d, i) {
-          return 'graph-node' + (i === currentIdx ? ' graph-node-current' : '');
-        })
-        .style('cursor', 'pointer')
-        .on('click', function(event, d) {
-          if (d.url && d.id !== nodes[currentIdx === -1 ? -1 : currentIdx].id) {
-            window.location.href = d.url;
-          }
-        })
-        .on('mouseenter', function(event, d) {
-          // Dim non-connected nodes and links
-          var connected = adj[d.id] || new Set();
-          node.classed('graph-node-dim', function(n) {
-            return n.id !== d.id && !connected.has(n.id);
-          });
-          link.classed('graph-link-dim', function(l) {
-            var s = typeof l.source === 'object' ? l.source.id : l.source;
-            var t = typeof l.target === 'object' ? l.target.id : l.target;
-            return s !== d.id && t !== d.id;
-          });
-          link.classed('graph-link-active', function(l) {
-            var s = typeof l.source === 'object' ? l.source.id : l.source;
-            var t = typeof l.target === 'object' ? l.target.id : l.target;
-            return s === d.id || t === d.id;
-          });
-        })
-        .on('mouseleave', function() {
-          node.classed('graph-node-dim', false);
-          link.classed('graph-link-dim', false);
-          link.classed('graph-link-active', false);
-        })
-        .call(d3.drag()
-          .on('start', function(event, d) { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-          .on('drag', function(event, d) { d.fx = event.x; d.fy = event.y; })
-          .on('end', function(event, d) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
-        );
-
-      node.append('circle')
-        .attr('r', function(d, i) {
-          if (i === currentIdx) return 8;
-          var v = d.val || 1;
-          return Math.max(4, Math.min(7, 3 + v));
-        });
-
-      node.append('text')
-        .text(function(d) { return d.name; })
-        .attr('dy', function(d, i) { return i === currentIdx ? -14 : -10; })
-        .attr('text-anchor', 'middle');
-
-      simulation.on('tick', function() {
-        link
-          .attr('x1', function(d) { return d.source.x; })
-          .attr('y1', function(d) { return d.source.y; })
-          .attr('x2', function(d) { return d.target.x; })
-          .attr('y2', function(d) { return d.target.y; });
-        node.attr('transform', function(d) {
-          d.x = Math.max(20, Math.min(width - 20, d.x));
-          d.y = Math.max(20, Math.min(height - 20, d.y));
-          return 'translate(' + d.x + ',' + d.y + ')';
-        });
+      link.classed('graph-link-active', function(l) {
+        var s = typeof l.source === 'object' ? l.source.id : l.source;
+        var t = typeof l.target === 'object' ? l.target.id : l.target;
+        return s === d.id || t === d.id;
       });
     })
-    .catch(function(err) {
-      console.error('Graph error:', err);
-      container.innerHTML = '<p class="graph-empty">Graph unavailable</p>';
+    .on('mouseleave', function() {
+      node.classed('graph-node-dim', false);
+      link.classed('graph-link-dim', false);
+      link.classed('graph-link-active', false);
+    })
+    .call(d3.drag()
+      .on('start', function(event, d) { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', function(event, d) { d.fx = event.x; d.fy = event.y; })
+      .on('end', function(event, d) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
+
+  node.append('circle')
+    .attr('r', function(d, i) {
+      if (i === currentIdx) return 8;
+      var v = d.val || 1;
+      return Math.max(4, Math.min(7, 3 + v));
     });
+
+  node.append('text')
+    .text(function(d) { return d.name; })
+    .attr('dy', function(d, i) { return i === currentIdx ? -14 : -10; })
+    .attr('text-anchor', 'middle');
+
+  simulation.on('tick', function() {
+    link
+      .attr('x1', function(d) { return d.source.x; })
+      .attr('y1', function(d) { return d.source.y; })
+      .attr('x2', function(d) { return d.target.x; })
+      .attr('y2', function(d) { return d.target.y; });
+    node.attr('transform', function(d) {
+      d.x = Math.max(20, Math.min(width - 20, d.x));
+      d.y = Math.max(20, Math.min(height - 20, d.y));
+      return 'translate(' + d.x + ',' + d.y + ')';
+    });
+  });
 })();
 </script>
