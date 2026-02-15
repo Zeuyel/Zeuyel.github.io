@@ -1,41 +1,63 @@
 # Generates backlinks data and graph JSON for each page/post.
-# Scans all markdown content for [[wikilinks]] and standard markdown links,
+# Scans raw markdown for [[wikilinks]] and standard markdown links,
 # builds a bidirectional link map, and injects backlinks into each document.
 # Also writes assets/js/graph-data.json for the interactive graph view.
+
+require 'json'
+require 'fileutils'
 
 module Jekyll
   class BacklinksGenerator < Generator
     safe true
-    priority :lowest  # run after all other generators
+    priority :low
 
     def generate(site)
       all_docs = site.posts.docs + site.pages.select { |p| p.ext == '.md' }
 
-      # Build forward links map: source_url => [target_url, ...]
+      # Build a lookup: various keys => doc
+      doc_lookup = {}
+      all_docs.each do |doc|
+        # By URL
+        doc_lookup[doc.url] = doc
+        doc_lookup[doc.url.chomp('/')] = doc
+
+        # By filename slug (e.g. "2026-02-13-game-theory")
+        slug = File.basename(doc.path, '.*')
+        doc_lookup[slug.downcase] = doc
+
+        # By title
+        title = doc.data['title']
+        doc_lookup[title.downcase] = doc if title && !title.empty?
+
+        # By permalink
+        perm = doc.data['permalink']
+        if perm
+          doc_lookup[perm] = doc
+          doc_lookup[perm.chomp('/')] = doc
+          # Also without leading slash
+          doc_lookup[perm.sub(/^\//, '')] = doc
+        end
+      end
+
+      # Build forward links map: doc => [target_doc, ...]
       forward = {}
       all_docs.each do |doc|
-        url = doc.url
-        forward[url] = extract_links(doc, all_docs)
+        forward[doc] = extract_links(doc, doc_lookup)
       end
 
-      # Build backlinks map: target_url => [source docs]
+      # Build backlinks map: doc => [source_doc, ...]
       backlinks = {}
-      all_docs.each do |doc|
-        backlinks[doc.url] = []
-      end
+      all_docs.each { |doc| backlinks[doc] = [] }
 
-      forward.each do |source_url, targets|
-        targets.each do |target_url|
-          source_doc = all_docs.find { |d| d.url == source_url }
-          if backlinks.key?(target_url) && source_doc
-            backlinks[target_url] << source_doc unless backlinks[target_url].include?(source_doc)
-          end
+      forward.each do |source_doc, targets|
+        targets.each do |target_doc|
+          backlinks[target_doc] << source_doc unless backlinks[target_doc].include?(source_doc)
         end
       end
 
       # Inject backlinks data into each document
       all_docs.each do |doc|
-        doc.data['backlinks'] = (backlinks[doc.url] || []).map do |d|
+        doc.data['backlinks'] = (backlinks[doc] || []).map do |d|
           { 'title' => d.data['title'] || File.basename(d.path, '.*'), 'url' => d.url }
         end
       end
@@ -43,11 +65,11 @@ module Jekyll
       # Generate graph data JSON
       nodes = []
       links = []
-      url_to_id = {}
+      doc_to_id = {}
 
       all_docs.each_with_index do |doc, i|
-        url_to_id[doc.url] = i
-        link_count = (forward[doc.url] || []).length + (backlinks[doc.url] || []).length
+        doc_to_id[doc] = i
+        link_count = (forward[doc] || []).length + (backlinks[doc] || []).length
         nodes << {
           id: i,
           name: doc.data['title'] || File.basename(doc.path, '.*'),
@@ -56,11 +78,11 @@ module Jekyll
         }
       end
 
-      forward.each do |source_url, targets|
-        source_id = url_to_id[source_url]
+      forward.each do |source_doc, targets|
+        source_id = doc_to_id[source_doc]
         next unless source_id
-        targets.each do |target_url|
-          target_id = url_to_id[target_url]
+        targets.each do |target_doc|
+          target_id = doc_to_id[target_doc]
           next unless target_id
           links << { source: source_id, target: target_id }
         end
@@ -68,40 +90,38 @@ module Jekyll
 
       graph_json = JSON.generate({ nodes: nodes, links: links })
 
-      # Write graph data file
       dir = File.join(site.source, 'assets', 'js')
       FileUtils.mkdir_p(dir)
       File.write(File.join(dir, 'graph-data.json'), graph_json)
 
-      # Add to static files so Jekyll copies it
+      # Ensure Jekyll copies the file
       site.static_files << Jekyll::StaticFile.new(site, site.source, 'assets/js', 'graph-data.json')
     end
 
     private
 
-    def extract_links(doc, all_docs)
+    def extract_links(doc, doc_lookup)
       content = doc.content || ''
-      links = []
+      targets = []
 
-      # Match [[wikilinks]] — with optional display text [[target|display]]
+      # Match [[wikilinks]] — [[target]] or [[target|display]]
       content.scan(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/).each do |match|
-        target_name = match[0].strip.downcase
-        target_doc = all_docs.find do |d|
-          name = d.data['title']&.downcase || File.basename(d.path, '.*').downcase
-          slug = File.basename(d.path, '.*').downcase
-          name == target_name || slug == target_name || slug.end_with?(target_name)
-        end
-        links << target_doc.url if target_doc
+        target_key = match[0].strip
+        # Try lookup by exact key, then downcase, then just the last part after /
+        target_doc = doc_lookup[target_key] ||
+                     doc_lookup[target_key.downcase] ||
+                     doc_lookup[File.basename(target_key).downcase]
+        targets << target_doc if target_doc && target_doc != doc
       end
 
-      # Match standard markdown links [text](url)
+      # Match standard markdown links [text](/url)
       content.scan(/\[([^\]]*)\]\(([^)]+)\)/).each do |_text, href|
         next if href.start_with?('http', '#', 'mailto:')
-        target_doc = all_docs.find { |d| d.url == href || d.url == href.chomp('/') + '/' }
-        links << target_doc.url if target_doc
+        target_doc = doc_lookup[href] || doc_lookup[href.chomp('/')]
+        targets << target_doc if target_doc && target_doc != doc
       end
 
-      links.uniq
+      targets.uniq
     end
   end
 end
