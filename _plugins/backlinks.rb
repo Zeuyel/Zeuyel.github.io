@@ -190,10 +190,10 @@ def obsidian_preprocess(doc)
   doc.content = content
 end
 
-Jekyll::Hooks.register :documents, :pre_render do |doc|
+Jekyll::Hooks.register :documents, :pre_render, priority: :highest do |doc|
   obsidian_preprocess(doc)
 end
 
-Jekyll::Hooks.register :pages, :pre_render do |page|
+Jekyll::Hooks.register :pages, :pre_render, priority: :highest do |page|
   obsidian_preprocess(page)
 end

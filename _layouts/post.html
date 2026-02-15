@@ -42,144 +42,363 @@ layout: default
   var container = document.getElementById('graph-container');
   if (!container) return;
 
-  // Graph data is inlined by Jekyll from backlinks.rb — no fetch needed
-  var data = {{ page.graph_data | jsonify }};
-
-  if (!data || !data.nodes || !data.nodes.length) {
-    container.innerHTML = '<p class="graph-empty">No graph data</p>';
-    return;
-  }
-
   function norm(url) {
-    try { url = decodeURIComponent(url); } catch(e) {}
+    try { url = decodeURIComponent(url); } catch (e) {}
     return url.replace(/\/+$/, '') || '/';
   }
 
-  var currentNorm = norm(currentUrl);
-  var currentIdx = -1;
-  data.nodes.forEach(function(n, i) {
-    if (norm(n.url) === currentNorm) currentIdx = i;
-  });
-  if (currentIdx === -1) {
+  function hasGraphData(data) {
+    return !!(data && Array.isArray(data.nodes) && data.nodes.length);
+  }
+
+  function addLookup(lookup, key, info) {
+    if (!key) return;
+    lookup[key] = info;
+    lookup[key.toLowerCase()] = info;
+  }
+
+  var localWikilinkLookup = {};
+  (function buildLocalWikilinkLookup() {
+    var docs = Array.isArray(window.__obsidianDocs) ? window.__obsidianDocs : [];
+    docs.forEach(function(doc) {
+      if (!doc || !doc.url) return;
+      var url = norm(doc.url);
+      var info = { url: url, title: doc.title || '', slug: doc.slug || '' };
+      addLookup(localWikilinkLookup, info.slug, info);
+      addLookup(localWikilinkLookup, info.title, info);
+      if (url) {
+        addLookup(localWikilinkLookup, url, info);
+        addLookup(localWikilinkLookup, url.replace(/^\//, ''), info);
+      }
+    });
+  })();
+
+  function localResolveWikilink(key, display) {
+    var cleanKey = (key || '').trim();
+    var cleanDisplay = display ? display.trim() : '';
+    if (!cleanKey) return { href: null, text: cleanDisplay || '' };
+
+    var info = localWikilinkLookup[cleanKey] || localWikilinkLookup[cleanKey.toLowerCase()];
+    if (info && info.url) {
+      return { href: info.url, text: cleanDisplay || info.title || cleanKey };
+    }
+
+    return { href: null, text: cleanDisplay || cleanKey };
+  }
+
+  function toInternalPath(href) {
+    if (!href || href.charAt(0) === '#') return null;
+    if (href.indexOf('mailto:') === 0 || href.indexOf('javascript:') === 0) return null;
+    try {
+      var u = new URL(href, window.location.origin);
+      if (u.origin !== window.location.origin) return null;
+      return norm(u.pathname);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function resolveWikilinkTarget(key, display) {
+    var resolved;
+    if (typeof window.__obsidianResolveWikilink === 'function') {
+      resolved = window.__obsidianResolveWikilink(key, display);
+    } else {
+      resolved = localResolveWikilink(key, display);
+    }
+    if (!resolved || !resolved.href) return null;
+    return toInternalPath(resolved.href);
+  }
+
+  function collectRawWikilinkTargets(root) {
+    var targets = new Set();
+    var pattern = /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g;
+
+    root.querySelectorAll('li > table').forEach(function(table) {
+      var cells = table.querySelectorAll('td, th');
+      if (cells.length !== 2) return;
+      var left = (cells[0].textContent || '').trim();
+      var right = (cells[1].textContent || '').trim();
+      if (!left.startsWith('[[') || !right.endsWith(']]')) return;
+
+      var key = left.replace(/^\[\[/, '').trim();
+      var display = right.replace(/\]\]$/, '').trim();
+      var resolvedPath = resolveWikilinkTarget(key, display);
+      if (resolvedPath) targets.add(resolvedPath);
+    });
+
+    var disallowed = { a: true, code: true, pre: true, script: true, style: true, textarea: true };
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(node) {
+        if (!node.nodeValue || node.nodeValue.indexOf('[[') === -1) return NodeFilter.FILTER_REJECT;
+        var parent = node.parentNode;
+        while (parent && parent.nodeType === 1) {
+          var tag = parent.tagName.toLowerCase();
+          if (disallowed[tag]) return NodeFilter.FILTER_REJECT;
+          parent = parent.parentNode;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    var node;
+    while ((node = walker.nextNode())) {
+      var text = node.nodeValue;
+      var match;
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(text))) {
+        var key = (match[1] || '').trim();
+        var display = match[2] ? match[2].trim() : '';
+        var resolvedPath = resolveWikilinkTarget(key, display);
+        if (resolvedPath) targets.add(resolvedPath);
+      }
+    }
+
+    return targets;
+  }
+
+  async function buildFallbackGraph() {
+    var docs = Array.isArray(window.__obsidianDocs) ? window.__obsidianDocs : [];
+    if (!docs.length) return null;
+
+    var unique = {};
+    docs.forEach(function(doc) {
+      if (!doc || !doc.url) return;
+      var path = norm(doc.url);
+      if (!path || unique[path]) return;
+      unique[path] = {
+        url: path,
+        title: doc.title || doc.slug || path
+      };
+    });
+
+    var catalog = Object.keys(unique).map(function(path) { return unique[path]; });
+    if (catalog.length < 2) return null;
+
+    var parser = new DOMParser();
+    var pageData = (await Promise.all(catalog.map(async function(doc) {
+      try {
+        var response = await fetch(doc.url, { credentials: 'same-origin' });
+        if (!response.ok) return null;
+
+        var html = await response.text();
+        var parsed = parser.parseFromString(html, 'text/html');
+        var root = parsed.querySelector('.post-content') || parsed.querySelector('.page-content') || parsed.body;
+        if (!root) return { url: doc.url, title: doc.title, targets: [] };
+
+        var foundTargets = new Set();
+        root.querySelectorAll('a[href]').forEach(function(a) {
+          var path = toInternalPath(a.getAttribute('href'));
+          if (path) foundTargets.add(path);
+        });
+
+        collectRawWikilinkTargets(root).forEach(function(path) {
+          if (path) foundTargets.add(path);
+        });
+
+        var titleEl = parsed.querySelector('.post-title') || parsed.querySelector('h1');
+        var title = titleEl ? titleEl.textContent.trim() : doc.title;
+        return {
+          url: doc.url,
+          title: title || doc.title || doc.url,
+          targets: Array.from(foundTargets)
+        };
+      } catch (e) {
+        return null;
+      }
+    }))).filter(Boolean);
+
+    if (pageData.length < 2) return null;
+
+    var idMap = {};
+    var nodes = [];
+    pageData.forEach(function(doc, i) {
+      idMap[doc.url] = i;
+      nodes.push({
+        id: i,
+        name: doc.title || unique[doc.url].title || doc.url,
+        url: doc.url,
+        val: 1
+      });
+    });
+
+    var links = [];
+    var seen = {};
+    var degree = {};
+    nodes.forEach(function(n) { degree[n.id] = 0; });
+
+    pageData.forEach(function(doc) {
+      var src = idMap[doc.url];
+      if (src === undefined) return;
+      doc.targets.forEach(function(targetPath) {
+        var tgt = idMap[norm(targetPath)];
+        if (tgt === undefined || tgt === src) return;
+        var key = src + '>' + tgt;
+        if (seen[key]) return;
+        seen[key] = true;
+        links.push({ source: src, target: tgt });
+        degree[src] += 1;
+        degree[tgt] += 1;
+      });
+    });
+
+    nodes.forEach(function(n) {
+      n.val = Math.max(1, degree[n.id] || 1);
+    });
+
+    return { nodes: nodes, links: links };
+  }
+
+  function renderGraph(data) {
+    if (!hasGraphData(data)) {
+      container.innerHTML = '<p class="graph-empty">No graph data</p>';
+      return;
+    }
+
+    container.innerHTML = '';
+
+    var currentNorm = norm(currentUrl);
+    var currentIdx = -1;
     data.nodes.forEach(function(n, i) {
-      if (currentNorm.indexOf(norm(n.url)) !== -1 || norm(n.url).indexOf(currentNorm) !== -1)
-        currentIdx = i;
+      if (norm(n.url) === currentNorm) currentIdx = i;
+    });
+    if (currentIdx === -1) {
+      data.nodes.forEach(function(n, i) {
+        if (currentNorm.indexOf(norm(n.url)) !== -1 || norm(n.url).indexOf(currentNorm) !== -1) {
+          currentIdx = i;
+        }
+      });
+    }
+
+    var nodes = data.nodes;
+    var links = data.links || [];
+
+    if (nodes.length < 2 || links.length === 0) {
+      container.innerHTML = '<p class="graph-empty">No connections yet</p>';
+      return;
+    }
+
+    var adj = {};
+    nodes.forEach(function(n) { adj[n.id] = new Set(); });
+    links.forEach(function(l) {
+      var s = typeof l.source === 'object' ? l.source.id : l.source;
+      var t = typeof l.target === 'object' ? l.target.id : l.target;
+      if (adj[s]) adj[s].add(t);
+      if (adj[t]) adj[t].add(s);
+    });
+
+    var width = container.clientWidth || 400;
+    var height = 320;
+
+    var svg = d3.select(container).append('svg')
+      .attr('width', width)
+      .attr('height', height)
+      .attr('viewBox', [0, 0, width, height]);
+
+    svg.append('defs').append('marker')
+      .attr('id', 'arrow')
+      .attr('viewBox', '0 -3 6 6')
+      .attr('refX', 14).attr('refY', 0)
+      .attr('markerWidth', 4).attr('markerHeight', 4)
+      .attr('orient', 'auto')
+      .append('path').attr('d', 'M0,-3L6,0L0,3').attr('fill', '#999').attr('opacity', 0.4);
+
+    var linkG = svg.append('g');
+    var nodeG = svg.append('g');
+
+    var simulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(links).id(function(d) { return d.id; }).distance(90))
+      .force('charge', d3.forceManyBody().strength(-180))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collision', d3.forceCollide().radius(25))
+      .force('x', d3.forceX(width / 2).strength(0.05))
+      .force('y', d3.forceY(height / 2).strength(0.05));
+
+    var link = linkG.selectAll('line')
+      .data(links)
+      .join('line')
+      .attr('class', 'graph-link')
+      .attr('marker-end', 'url(#arrow)');
+
+    var node = nodeG.selectAll('g')
+      .data(nodes)
+      .join('g')
+      .attr('class', function(d, i) {
+        return 'graph-node' + (i === currentIdx ? ' graph-node-current' : '');
+      })
+      .style('cursor', 'pointer')
+      .on('click', function(event, d) {
+        if (d.url && d.id !== (currentIdx >= 0 ? nodes[currentIdx].id : -1)) {
+          window.location.href = d.url;
+        }
+      })
+      .on('mouseenter', function(event, d) {
+        var connected = adj[d.id] || new Set();
+        node.classed('graph-node-dim', function(n) {
+          return n.id !== d.id && !connected.has(n.id);
+        });
+        link.classed('graph-link-dim', function(l) {
+          var s = typeof l.source === 'object' ? l.source.id : l.source;
+          var t = typeof l.target === 'object' ? l.target.id : l.target;
+          return s !== d.id && t !== d.id;
+        });
+        link.classed('graph-link-active', function(l) {
+          var s = typeof l.source === 'object' ? l.source.id : l.source;
+          var t = typeof l.target === 'object' ? l.target.id : l.target;
+          return s === d.id || t === d.id;
+        });
+      })
+      .on('mouseleave', function() {
+        node.classed('graph-node-dim', false);
+        link.classed('graph-link-dim', false);
+        link.classed('graph-link-active', false);
+      })
+      .call(d3.drag()
+        .on('start', function(event, d) { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+        .on('drag', function(event, d) { d.fx = event.x; d.fy = event.y; })
+        .on('end', function(event, d) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+      );
+
+    node.append('circle')
+      .attr('r', function(d, i) {
+        if (i === currentIdx) return 8;
+        var v = d.val || 1;
+        return Math.max(4, Math.min(7, 3 + v));
+      });
+
+    node.append('text')
+      .text(function(d) { return d.name; })
+      .attr('dy', function(d, i) { return i === currentIdx ? -14 : -10; })
+      .attr('text-anchor', 'middle');
+
+    simulation.on('tick', function() {
+      link
+        .attr('x1', function(d) { return d.source.x; })
+        .attr('y1', function(d) { return d.source.y; })
+        .attr('x2', function(d) { return d.target.x; })
+        .attr('y2', function(d) { return d.target.y; });
+      node.attr('transform', function(d) {
+        d.x = Math.max(20, Math.min(width - 20, d.x));
+        d.y = Math.max(20, Math.min(height - 20, d.y));
+        return 'translate(' + d.x + ',' + d.y + ')';
+      });
     });
   }
 
-  var nodes = data.nodes;
-  var links = data.links || [];
-
-  if (nodes.length < 2 || links.length === 0) {
-    container.innerHTML = '<p class="graph-empty">No connections yet</p>';
+  var inlineData = {{ page.graph_data | jsonify }};
+  if (hasGraphData(inlineData)) {
+    renderGraph(inlineData);
     return;
   }
 
-  // Build adjacency for hover highlighting
-  var adj = {};
-  nodes.forEach(function(n) { adj[n.id] = new Set(); });
-  links.forEach(function(l) {
-    var s = typeof l.source === 'object' ? l.source.id : l.source;
-    var t = typeof l.target === 'object' ? l.target.id : l.target;
-    if (adj[s]) adj[s].add(t);
-    if (adj[t]) adj[t].add(s);
-  });
-
-  var width = container.clientWidth || 400;
-  var height = 320;
-
-  var svg = d3.select(container).append('svg')
-    .attr('width', width)
-    .attr('height', height)
-    .attr('viewBox', [0, 0, width, height]);
-
-  svg.append('defs').append('marker')
-    .attr('id', 'arrow')
-    .attr('viewBox', '0 -3 6 6')
-    .attr('refX', 14).attr('refY', 0)
-    .attr('markerWidth', 4).attr('markerHeight', 4)
-    .attr('orient', 'auto')
-    .append('path').attr('d', 'M0,-3L6,0L0,3').attr('fill', '#999').attr('opacity', 0.4);
-
-  var linkG = svg.append('g');
-  var nodeG = svg.append('g');
-
-  var simulation = d3.forceSimulation(nodes)
-    .force('link', d3.forceLink(links).id(function(d) { return d.id; }).distance(90))
-    .force('charge', d3.forceManyBody().strength(-180))
-    .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('collision', d3.forceCollide().radius(25))
-    .force('x', d3.forceX(width / 2).strength(0.05))
-    .force('y', d3.forceY(height / 2).strength(0.05));
-
-  var link = linkG.selectAll('line')
-    .data(links)
-    .join('line')
-    .attr('class', 'graph-link')
-    .attr('marker-end', 'url(#arrow)');
-
-  var node = nodeG.selectAll('g')
-    .data(nodes)
-    .join('g')
-    .attr('class', function(d, i) {
-      return 'graph-node' + (i === currentIdx ? ' graph-node-current' : '');
-    })
-    .style('cursor', 'pointer')
-    .on('click', function(event, d) {
-      if (d.url && d.id !== (currentIdx >= 0 ? nodes[currentIdx].id : -1)) {
-        window.location.href = d.url;
-      }
-    })
-    .on('mouseenter', function(event, d) {
-      var connected = adj[d.id] || new Set();
-      node.classed('graph-node-dim', function(n) {
-        return n.id !== d.id && !connected.has(n.id);
-      });
-      link.classed('graph-link-dim', function(l) {
-        var s = typeof l.source === 'object' ? l.source.id : l.source;
-        var t = typeof l.target === 'object' ? l.target.id : l.target;
-        return s !== d.id && t !== d.id;
-      });
-      link.classed('graph-link-active', function(l) {
-        var s = typeof l.source === 'object' ? l.source.id : l.source;
-        var t = typeof l.target === 'object' ? l.target.id : l.target;
-        return s === d.id || t === d.id;
-      });
-    })
-    .on('mouseleave', function() {
-      node.classed('graph-node-dim', false);
-      link.classed('graph-link-dim', false);
-      link.classed('graph-link-active', false);
-    })
-    .call(d3.drag()
-      .on('start', function(event, d) { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-      .on('drag', function(event, d) { d.fx = event.x; d.fy = event.y; })
-      .on('end', function(event, d) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
-    );
-
-  node.append('circle')
-    .attr('r', function(d, i) {
-      if (i === currentIdx) return 8;
-      var v = d.val || 1;
-      return Math.max(4, Math.min(7, 3 + v));
-    });
-
-  node.append('text')
-    .text(function(d) { return d.name; })
-    .attr('dy', function(d, i) { return i === currentIdx ? -14 : -10; })
-    .attr('text-anchor', 'middle');
-
-  simulation.on('tick', function() {
-    link
-      .attr('x1', function(d) { return d.source.x; })
-      .attr('y1', function(d) { return d.source.y; })
-      .attr('x2', function(d) { return d.target.x; })
-      .attr('y2', function(d) { return d.target.y; });
-    node.attr('transform', function(d) {
-      d.x = Math.max(20, Math.min(width - 20, d.x));
-      d.y = Math.max(20, Math.min(height - 20, d.y));
-      return 'translate(' + d.x + ',' + d.y + ')';
-    });
+  container.innerHTML = '<p class="graph-empty">Building graph...</p>';
+  buildFallbackGraph().then(function(fallbackData) {
+    if (hasGraphData(fallbackData)) {
+      renderGraph(fallbackData);
+    } else {
+      container.innerHTML = '<p class="graph-empty">No graph data</p>';
+    }
+  }).catch(function() {
+    container.innerHTML = '<p class="graph-empty">No graph data</p>';
   });
 })();
 </script>

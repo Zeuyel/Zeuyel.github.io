@@ -24,6 +24,19 @@
   <!-- highlight.js (code syntax highlighting) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/github.min.css">
   <script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js"></script>
+
+  {% assign obsidian_docs = site.posts | concat: site.pages %}
+  <script>
+    window.__obsidianDocs = [
+      {% for doc in obsidian_docs %}
+      {
+        "slug": {{ doc.basename_without_ext | default: (doc.path | split: '/' | last | split: '.' | first) | jsonify }},
+        "title": {{ doc.title | default: doc.name | default: doc.url | jsonify }},
+        "url": {{ doc.url | relative_url | jsonify }}
+      }{% unless forloop.last %},{% endunless %}
+      {% endfor %}
+    ];
+  </script>
 </head>
 <body>
   <header class="site-header">
@@ -138,6 +151,166 @@
         bq.replaceWith(div);
       }
     });
+  })();
+  </script>
+
+  <!-- Obsidian Wikilink fallback (works even when server-side plugin is unavailable) -->
+  <script>
+  (function() {
+    var docs = Array.isArray(window.__obsidianDocs) ? window.__obsidianDocs : [];
+
+    function normPath(url) {
+      if (!url) return null;
+      try {
+        var u = new URL(url, window.location.origin);
+        return (u.pathname || '/').replace(/\/+$/, '') || '/';
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function addLookup(lookup, key, doc) {
+      if (!key) return;
+      lookup[key] = doc;
+      lookup[key.toLowerCase()] = doc;
+    }
+
+    var wikilinkLookup = {};
+    docs.forEach(function(doc) {
+      if (!doc || !doc.url) return;
+      var normalized = normPath(doc.url);
+      var title = doc.title || '';
+      var slug = doc.slug || '';
+      var entry = {
+        url: normalized || doc.url,
+        title: title,
+        slug: slug
+      };
+      addLookup(wikilinkLookup, slug, entry);
+      addLookup(wikilinkLookup, title, entry);
+      if (normalized) {
+        addLookup(wikilinkLookup, normalized, entry);
+        addLookup(wikilinkLookup, normalized.replace(/^\//, ''), entry);
+      }
+    });
+
+    function resolveWikilink(key, display) {
+      var cleanKey = (key || '').trim();
+      var cleanDisplay = display ? display.trim() : '';
+      if (!cleanKey) return { href: null, text: cleanDisplay || '' };
+      var info = wikilinkLookup[cleanKey] || wikilinkLookup[cleanKey.toLowerCase()];
+      if (info && info.url) {
+        return {
+          href: info.url,
+          text: cleanDisplay || info.title || cleanKey
+        };
+      }
+      return {
+        href: null,
+        text: cleanDisplay || cleanKey
+      };
+    }
+
+    function replaceWikilinkTables(root) {
+      root.querySelectorAll('li > table').forEach(function(table) {
+        var cells = table.querySelectorAll('td, th');
+        if (cells.length !== 2) return;
+
+        var left = (cells[0].textContent || '').trim();
+        var right = (cells[1].textContent || '').trim();
+        if (!left.startsWith('[[') || !right.endsWith(']]')) return;
+
+        var key = left.replace(/^\[\[/, '').trim();
+        var display = right.replace(/\]\]$/, '').trim();
+        if (!key) return;
+
+        var resolved = resolveWikilink(key, display);
+        var replacement;
+        if (resolved.href) {
+          replacement = document.createElement('a');
+          replacement.href = resolved.href;
+          replacement.textContent = resolved.text;
+        } else {
+          replacement = document.createTextNode(resolved.text);
+        }
+
+        table.replaceWith(replacement);
+      });
+    }
+
+    function replaceRawWikilinks(root) {
+      var pattern = /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g;
+      var disallowed = { a: true, code: true, pre: true, script: true, style: true, textarea: true };
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: function(node) {
+          if (!node.nodeValue || node.nodeValue.indexOf('[[') === -1) return NodeFilter.FILTER_REJECT;
+          var parent = node.parentNode;
+          while (parent && parent.nodeType === 1) {
+            var tag = parent.tagName.toLowerCase();
+            if (disallowed[tag]) return NodeFilter.FILTER_REJECT;
+            parent = parent.parentNode;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+
+      var nodes = [];
+      var current;
+      while ((current = walker.nextNode())) nodes.push(current);
+
+      nodes.forEach(function(node) {
+        var text = node.nodeValue;
+        pattern.lastIndex = 0;
+        if (!pattern.test(text)) return;
+        pattern.lastIndex = 0;
+
+        var frag = document.createDocumentFragment();
+        var last = 0;
+        var match;
+        while ((match = pattern.exec(text))) {
+          if (match.index > last) {
+            frag.appendChild(document.createTextNode(text.slice(last, match.index)));
+          }
+          var key = (match[1] || '').trim();
+          var display = match[2] ? match[2].trim() : '';
+          var resolved = resolveWikilink(key, display);
+          if (resolved.href) {
+            var a = document.createElement('a');
+            a.href = resolved.href;
+            a.textContent = resolved.text;
+            frag.appendChild(a);
+          } else {
+            frag.appendChild(document.createTextNode(resolved.text));
+          }
+          last = match.index + match[0].length;
+        }
+
+        if (last < text.length) {
+          frag.appendChild(document.createTextNode(text.slice(last)));
+        }
+        node.replaceWith(frag);
+      });
+    }
+
+    function fixWikilinks(root) {
+      var targetRoot = root || document;
+      replaceWikilinkTables(targetRoot);
+      replaceRawWikilinks(targetRoot);
+    }
+
+    window.__obsidianResolveWikilink = resolveWikilink;
+    window.__obsidianFixWikilinks = fixWikilinks;
+
+    var apply = function() {
+      var target = document.querySelector('.post-content') || document.querySelector('.page-content');
+      if (target) fixWikilinks(target);
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', apply);
+    } else {
+      apply();
+    }
   })();
   </script>
 
