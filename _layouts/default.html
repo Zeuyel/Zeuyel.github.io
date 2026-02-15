@@ -477,6 +477,107 @@
   })();
   </script>
 
+  <!-- Obsidian inline tag links (#tag, #parent/child) -->
+  <script>
+  (function() {
+    var tagPageUrl = {{ '/tags/' | relative_url | jsonify }};
+    var tagPattern = /#([A-Za-z0-9_\-\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u4E00-\u9FFF]+(?:\/[A-Za-z0-9_\-\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u4E00-\u9FFF]+)*)/g;
+    var disallowedTags = { a: true, code: true, pre: true, script: true, style: true, textarea: true };
+
+    function isBoundary(ch) {
+      if (!ch) return true;
+      return /[\s(\[{<>"'`~!@$%^&*+=|\\:;,.?，。；：、]/.test(ch);
+    }
+
+    function isHexColorToken(token) {
+      return /^#[0-9a-f]{3,8}$/i.test(token);
+    }
+
+    function hasBlockedAncestor(node) {
+      var parent = node.parentNode;
+      while (parent && parent.nodeType === 1) {
+        var tag = parent.tagName.toLowerCase();
+        if (disallowedTags[tag]) return true;
+        if (parent.classList) {
+          if (parent.classList.contains('katex') || parent.classList.contains('katex-display')) return true;
+          if (parent.classList.contains('mermaid')) return true;
+        }
+        parent = parent.parentNode;
+      }
+      return false;
+    }
+
+    function convertInlineTags(root) {
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: function(node) {
+          if (!node.nodeValue || node.nodeValue.indexOf('#') === -1) return NodeFilter.FILTER_REJECT;
+          if (hasBlockedAncestor(node)) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+
+      var nodes = [];
+      var node;
+      while ((node = walker.nextNode())) nodes.push(node);
+
+      nodes.forEach(function(textNode) {
+        var text = textNode.nodeValue;
+        tagPattern.lastIndex = 0;
+
+        var last = 0;
+        var found = false;
+        var fragment = document.createDocumentFragment();
+        var match;
+
+        while ((match = tagPattern.exec(text))) {
+          var token = match[0];
+          var tagName = match[1];
+          var start = match.index;
+          var prev = start > 0 ? text[start - 1] : '';
+          var next = tagPattern.lastIndex < text.length ? text[tagPattern.lastIndex] : '';
+
+          if (!isBoundary(prev) || (!isBoundary(next) && next !== '/')) continue;
+          if (isHexColorToken(token)) continue;
+
+          if (start > last) {
+            fragment.appendChild(document.createTextNode(text.slice(last, start)));
+          }
+
+          var a = document.createElement('a');
+          a.className = 'inline-tag';
+          a.textContent = token;
+          a.href = tagPageUrl + '?q=' + encodeURIComponent(tagName);
+          a.setAttribute('data-tag', tagName.toLowerCase());
+          fragment.appendChild(a);
+
+          last = tagPattern.lastIndex;
+          found = true;
+        }
+
+        if (!found) return;
+        if (last < text.length) {
+          fragment.appendChild(document.createTextNode(text.slice(last)));
+        }
+        textNode.replaceWith(fragment);
+      });
+    }
+
+    function apply() {
+      var target = document.querySelector('.post-content') || document.querySelector('.page-content');
+      if (!target) return;
+      if (target.getAttribute('data-inline-tags-ready') === '1') return;
+      convertInlineTags(target);
+      target.setAttribute('data-inline-tags-ready', '1');
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() { setTimeout(apply, 0); });
+    } else {
+      setTimeout(apply, 0);
+    }
+  })();
+  </script>
+
   <!-- Internal link hover preview (Obsidian-style page preview) -->
   <script>
   (function() {

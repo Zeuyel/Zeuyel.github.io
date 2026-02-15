@@ -16,6 +16,13 @@ layout: default
       <time class="post-date" datetime="{{ page.date | date_to_xmlschema }}">
         {{ page.date | date: "%Y-%m-%d" }}
       </time>
+      {% if page.tags and page.tags.size > 0 %}
+      <div class="post-tags">
+        {% for tag in page.tags %}
+        <a class="tag-chip post-tag-chip" href="{{ '/tags/' | relative_url }}?q={{ tag | url_encode }}">#{{ tag }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
     </header>
     <div class="post-content">
       {{ content }}
