@@ -36,8 +36,19 @@
       }
 
       {% for doc in site.posts %}
+      {% assign raw_slug = doc.basename_without_ext | default: (doc.path | split: '/' | last | split: '.' | first) %}
+      {% assign slug = raw_slug %}
+      {% assign slug_parts = raw_slug | split: '-' %}
+      {% if slug_parts.size > 3 and slug_parts[0].size == 4 and slug_parts[1].size == 2 and slug_parts[2].size == 2 %}
+      {% assign stripped_parts = slug_parts | slice: 3, 200 %}
+      {% assign slug = stripped_parts | join: '-' %}
+      {% endif %}
+      {% if slug == '' %}
+      {% assign slug = raw_slug %}
+      {% endif %}
       addDoc({
-        "slug": {{ doc.basename_without_ext | default: (doc.path | split: '/' | last | split: '.' | first) | jsonify }},
+        "slug": {{ slug | jsonify }},
+        "legacySlug": {{ raw_slug | jsonify }},
         "title": {{ doc.title | default: doc.name | default: doc.url | jsonify }},
         "url": {{ doc.url | relative_url | jsonify }},
         "graph": {% if doc.graph == false %}false{% else %}true{% endif %}
@@ -49,6 +60,7 @@
       {% if doc_ext == 'md' or doc_ext == 'markdown' or doc_ext == 'mkdown' or doc_ext == 'mkdn' or doc_ext == 'mkd' %}
       addDoc({
         "slug": {{ doc.basename_without_ext | default: (doc.path | split: '/' | last | split: '.' | first) | jsonify }},
+        "legacySlug": {{ doc.basename_without_ext | default: (doc.path | split: '/' | last | split: '.' | first) | jsonify }},
         "title": {{ doc.title | default: doc.name | default: doc.url | jsonify }},
         "url": {{ doc.url | relative_url | jsonify }},
         "graph": {% if doc.graph == true %}true{% else %}false{% endif %}
@@ -201,12 +213,15 @@
       var normalized = normPath(doc.url);
       var title = doc.title || '';
       var slug = doc.slug || '';
+      var legacySlug = doc.legacySlug || '';
       var entry = {
         url: normalized || doc.url,
         title: title,
-        slug: slug
+        slug: slug,
+        legacySlug: legacySlug
       };
       addLookup(wikilinkLookup, slug, entry);
+      addLookup(wikilinkLookup, legacySlug, entry);
       addLookup(wikilinkLookup, title, entry);
       if (normalized) {
         addLookup(wikilinkLookup, normalized, entry);

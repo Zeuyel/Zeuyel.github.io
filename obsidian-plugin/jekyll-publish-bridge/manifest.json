@@ -1,0 +1,9 @@
+{
+  "id": "jekyll-publish-bridge",
+  "name": "Jekyll Publish Bridge",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Toggle publish flags and export selected Obsidian notes into a Jekyll blog repo.",
+  "author": "Epictus",
+  "isDesktopOnly": true
+}

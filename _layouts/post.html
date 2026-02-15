@@ -65,8 +65,9 @@ layout: default
     docs.forEach(function(doc) {
       if (!doc || !doc.url) return;
       var url = norm(doc.url);
-      var info = { url: url, title: doc.title || '', slug: doc.slug || '' };
+      var info = { url: url, title: doc.title || '', slug: doc.slug || '', legacySlug: doc.legacySlug || '' };
       addLookup(localWikilinkLookup, info.slug, info);
+      addLookup(localWikilinkLookup, info.legacySlug, info);
       addLookup(localWikilinkLookup, info.title, info);
       if (url) {
         addLookup(localWikilinkLookup, url, info);

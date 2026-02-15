@@ -20,15 +20,25 @@ module Jekyll
       doc_lookup = {}
       all_docs.each do |doc|
         slug = File.basename(doc.path, '.*')
+        stripped_slug = stripped_post_slug(doc, slug)
         title = doc.data['title'] || slug
         perm = doc.data['permalink']
         url = doc.url
+        source_path = doc.data['obsidian_source']
 
         [url, url.chomp('/')].each { |k| doc_lookup[k] = doc }
         [slug, slug.downcase].each { |k| doc_lookup[k] = doc }
+        if stripped_slug && stripped_slug != slug
+          [stripped_slug, stripped_slug.downcase].each { |k| doc_lookup[k] = doc }
+        end
         [title, title.downcase].each { |k| doc_lookup[k] = doc } if title && !title.empty?
         if perm
           [perm, perm.chomp('/'), perm.sub(%r{^/}, ''), perm.sub(%r{^/}, '').chomp('/')].each { |k| doc_lookup[k] = doc }
+        end
+        if source_path
+          source_key = source_path.to_s.gsub('\\', '/').sub(/\.[^\/\.]+$/, '')
+          source_slug = File.basename(source_key)
+          [source_key, source_key.downcase, source_slug, source_slug.downcase].each { |k| doc_lookup[k] = doc if k && !k.empty? }
         end
       end
 
@@ -107,6 +117,12 @@ module Jekyll
       return false if doc.data['graph'] == false
       return true if doc.respond_to?(:collection) && doc.collection && doc.collection.label == 'posts'
       doc.data['graph'] == true
+    end
+
+    def stripped_post_slug(doc, slug)
+      return slug unless doc.respond_to?(:collection) && doc.collection && doc.collection.label == 'posts'
+      m = slug.match(/^\d{4}-\d{2}-\d{2}-(.+)$/)
+      m ? m[1] : slug
     end
 
     def read_raw(doc, site)
