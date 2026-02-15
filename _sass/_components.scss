@@ -2,7 +2,8 @@
 
 // ── Callouts (Obsidian-style) ──
 .callout {
-  border-left: 4px solid $color-accent;
+  --callout-color: #{$color-accent};
+  border-left: 4px solid var(--callout-color);
   border-radius: $radius-s;
   background: $color-bg-secondary;
   margin: 1.5em 0;
@@ -24,6 +25,7 @@
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  color: var(--callout-color);
 
   svg {
     width: 18px;
@@ -57,8 +59,9 @@
   p { margin-bottom: 0.5em; }
 }
 
-// Callout type colors — icon stroke inherits from .callout-title color
+// Callout type colors — uses --callout-color custom property
 @mixin callout-color($color) {
+  --callout-color: #{$color};
   border-left-color: $color;
   .callout-title { color: $color; }
   .callout-icon svg { stroke: $color; }

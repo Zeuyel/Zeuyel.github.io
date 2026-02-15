@@ -5,6 +5,7 @@
 
 require 'json'
 require 'fileutils'
+require 'uri'
 
 module Jekyll
   class BacklinksGenerator < Generator
@@ -17,17 +18,26 @@ module Jekyll
       # Build a lookup: various keys => doc
       doc_lookup = {}
       all_docs.each do |doc|
-        # By URL
+        # By URL (may be URI-encoded for non-ASCII)
         doc_lookup[doc.url] = doc
         doc_lookup[doc.url.chomp('/')] = doc
 
+        # Also store decoded URL for matching
+        decoded_url = URI.decode_www_form_component(doc.url) rescue doc.url
+        doc_lookup[decoded_url] = doc
+        doc_lookup[decoded_url.chomp('/')] = doc
+
         # By filename slug (e.g. "2026-02-13-game-theory")
         slug = File.basename(doc.path, '.*')
+        doc_lookup[slug] = doc
         doc_lookup[slug.downcase] = doc
 
         # By title
         title = doc.data['title']
-        doc_lookup[title.downcase] = doc if title && !title.empty?
+        if title && !title.empty?
+          doc_lookup[title] = doc
+          doc_lookup[title.downcase] = doc
+        end
 
         # By permalink
         perm = doc.data['permalink']
@@ -36,6 +46,7 @@ module Jekyll
           doc_lookup[perm.chomp('/')] = doc
           # Also without leading slash
           doc_lookup[perm.sub(/^\//, '')] = doc
+          doc_lookup[perm.sub(/^\//, '').chomp('/')] = doc
         end
       end
 

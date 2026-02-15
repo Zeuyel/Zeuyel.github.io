@@ -45,12 +45,42 @@ layout: default
   var width = container.clientWidth || 300;
   var height = 280;
 
+  // Normalize URL for comparison (strip trailing slash, decode URI)
+  function normalizeUrl(url) {
+    try { url = decodeURIComponent(url); } catch(e) {}
+    return url.replace(/\/+$/, '') || '/';
+  }
+
+  var currentNorm = normalizeUrl(currentUrl);
+
   fetch({{ '/assets/js/graph-data.json' | relative_url | jsonify }})
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
     .then(function(data) {
-      // Find current node
-      var current = data.nodes.find(function(n) { return n.url === currentUrl; });
-      if (!current) return;
+      if (!data || !data.nodes || !data.links) {
+        container.innerHTML = '<p class="graph-empty">No graph data</p>';
+        return;
+      }
+
+      // Find current node (try normalized URL match)
+      var current = data.nodes.find(function(n) {
+        return normalizeUrl(n.url) === currentNorm;
+      });
+
+      if (!current) {
+        // Fallback: try partial match
+        current = data.nodes.find(function(n) {
+          return currentNorm.indexOf(normalizeUrl(n.url)) !== -1 ||
+                 normalizeUrl(n.url).indexOf(currentNorm) !== -1;
+        });
+      }
+
+      if (!current) {
+        container.innerHTML = '<p class="graph-empty">Page not in graph</p>';
+        return;
+      }
 
       // Filter to local neighborhood (1 hop)
       var connectedIds = new Set([current.id]);
@@ -128,6 +158,10 @@ layout: default
           return 'translate(' + d.x + ',' + d.y + ')';
         });
       });
+    })
+    .catch(function(err) {
+      console.error('Graph error:', err);
+      container.innerHTML = '<p class="graph-empty">Graph unavailable</p>';
     });
 })();
 </script>
