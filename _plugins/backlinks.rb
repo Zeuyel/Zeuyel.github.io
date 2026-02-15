@@ -1,7 +1,9 @@
-# Generates backlinks data and graph data for each page/post.
-# Scans raw file content for [[wikilinks]] and standard markdown links,
-# builds a bidirectional link map, and injects backlinks + graph data
-# directly into each document's data (no separate JSON file needed).
+# All-in-one plugin: wikilinks conversion, backlinks, and graph data.
+#
+# Phase 1 (Generator): Read raw files, extract [[wikilinks]], build
+#   backlinks and graph data, inject into doc.data.
+# Phase 2 (:pre_render hook): Convert [[wikilinks]] to markdown links
+#   and protect math expressions from kramdown table parsing.
 
 require 'json'
 require 'uri'
@@ -14,117 +16,182 @@ module Jekyll
     def generate(site)
       all_docs = site.posts.docs + site.pages.select { |p| p.ext == '.md' }
 
-      # Build a lookup: various keys => doc
+      # Build doc lookup by various keys
       doc_lookup = {}
       all_docs.each do |doc|
-        doc_lookup[doc.url] = doc
-        doc_lookup[doc.url.chomp('/')] = doc
-
-        decoded_url = URI.decode_www_form_component(doc.url) rescue doc.url
-        doc_lookup[decoded_url] = doc
-        doc_lookup[decoded_url.chomp('/')] = doc
-
         slug = File.basename(doc.path, '.*')
+        title = doc.data['title'] || slug
+        perm = doc.data['permalink']
+        url = doc.url
+
+        doc_lookup[url] = doc
+        doc_lookup[url.chomp('/')] = doc
+
+        begin
+          decoded = URI.decode_www_form_component(url)
+          doc_lookup[decoded] = doc
+          doc_lookup[decoded.chomp('/')] = doc
+        rescue
+        end
+
         doc_lookup[slug] = doc
         doc_lookup[slug.downcase] = doc
 
-        title = doc.data['title']
         if title && !title.empty?
           doc_lookup[title] = doc
           doc_lookup[title.downcase] = doc
         end
 
-        perm = doc.data['permalink']
         if perm
           doc_lookup[perm] = doc
           doc_lookup[perm.chomp('/')] = doc
-          doc_lookup[perm.sub(/^\//, '')] = doc
-          doc_lookup[perm.sub(/^\//, '').chomp('/')] = doc
+          clean = perm.sub(/^\//, '').chomp('/')
+          doc_lookup[clean] = doc
         end
       end
 
-      # Build forward links map: doc => [target_doc, ...]
+      # Store lookup in site.data for the :pre_render hook
+      site.data['_doc_lookup_for_wikilinks'] = {}
+      doc_lookup.each do |key, doc|
+        site.data['_doc_lookup_for_wikilinks'][key] = {
+          'url' => doc.url,
+          'title' => doc.data['title'] || File.basename(doc.path, '.*')
+        }
+      end
+
+      # Extract links from raw files
       forward = {}
       all_docs.each do |doc|
         forward[doc] = extract_links(doc, doc_lookup, site)
       end
 
-      # Build backlinks map: doc => [source_doc, ...]
+      # Build backlinks
       backlinks = {}
       all_docs.each { |doc| backlinks[doc] = [] }
-
-      forward.each do |source_doc, targets|
-        targets.each do |target_doc|
-          backlinks[target_doc] << source_doc unless backlinks[target_doc].include?(source_doc)
+      forward.each do |src, targets|
+        targets.each do |tgt|
+          backlinks[tgt] << src unless backlinks[tgt].include?(src)
         end
       end
 
-      # Build graph data structures
+      # Build graph data
       doc_to_id = {}
       nodes = []
       all_docs.each_with_index do |doc, i|
         doc_to_id[doc] = i
-        link_count = (forward[doc] || []).length + (backlinks[doc] || []).length
+        lc = (forward[doc] || []).length + (backlinks[doc] || []).length
         nodes << {
           'id' => i,
           'name' => doc.data['title'] || File.basename(doc.path, '.*'),
           'url' => doc.url,
-          'val' => [link_count, 1].max
+          'val' => [lc, 1].max
         }
       end
 
       links_arr = []
-      forward.each do |source_doc, targets|
-        source_id = doc_to_id[source_doc]
-        next unless source_id
-        targets.each do |target_doc|
-          target_id = doc_to_id[target_doc]
-          next unless target_id
-          links_arr << { 'source' => source_id, 'target' => target_id }
+      forward.each do |src, targets|
+        sid = doc_to_id[src]
+        next unless sid
+        targets.each do |tgt|
+          tid = doc_to_id[tgt]
+          next unless tid
+          links_arr << { 'source' => sid, 'target' => tid }
         end
       end
 
-      graph_data = { 'nodes' => nodes, 'links' => links_arr }
+      graph = { 'nodes' => nodes, 'links' => links_arr }
 
-      # Inject backlinks and graph data into each document
+      # Inject into every doc
       all_docs.each do |doc|
         doc.data['backlinks'] = (backlinks[doc] || []).map do |d|
           { 'title' => d.data['title'] || File.basename(d.path, '.*'), 'url' => d.url }
         end
-        # Embed full graph data into every doc so the template can inline it
-        doc.data['graph_data'] = graph_data
+        doc.data['graph_data'] = graph
       end
+
+      Jekyll.logger.info "Backlinks:", "#{all_docs.size} docs, #{links_arr.size} links"
     end
 
     private
 
     def extract_links(doc, doc_lookup, site)
-      full_path = if File.absolute_path?(doc.path)
-                    doc.path
-                  else
-                    File.join(site.source, doc.path)
-                  end
+      path = doc.path
+      path = File.join(site.source, path) unless File.absolute_path?(path)
 
-      raw = File.read(full_path, encoding: 'utf-8') rescue ''
+      raw = ''
+      begin
+        raw = File.read(path, encoding: 'utf-8')
+      rescue => e
+        Jekyll.logger.warn "Backlinks:", "Cannot read #{path}: #{e.message}"
+        return []
+      end
+
       raw = raw.sub(/\A---.*?---\s*/m, '')
-
       targets = []
 
       raw.scan(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/).each do |match|
-        target_key = match[0].strip
-        target_doc = doc_lookup[target_key] ||
-                     doc_lookup[target_key.downcase] ||
-                     doc_lookup[File.basename(target_key).downcase]
-        targets << target_doc if target_doc && target_doc != doc
+        key = match[0].strip
+        t = doc_lookup[key] || doc_lookup[key.downcase] || doc_lookup[File.basename(key).downcase]
+        targets << t if t && t != doc
       end
 
       raw.scan(/\[([^\]]*)\]\(([^)]+)\)/).each do |_text, href|
         next if href.start_with?('http', '#', 'mailto:')
-        target_doc = doc_lookup[href] || doc_lookup[href.chomp('/')]
-        targets << target_doc if target_doc && target_doc != doc
+        t = doc_lookup[href] || doc_lookup[href.chomp('/')]
+        targets << t if t && t != doc
       end
 
       targets.uniq
     end
   end
+end
+
+# ── Pre-render hook: convert [[wikilinks]] and protect math ──
+
+Jekyll::Hooks.register :documents, :pre_render do |doc|
+  next unless doc.content
+  lookup = doc.site.data['_doc_lookup_for_wikilinks'] || {}
+  doc.content = convert_wikilinks(doc.content, lookup)
+end
+
+Jekyll::Hooks.register :pages, :pre_render do |page|
+  next unless page.content
+  lookup = page.site.data['_doc_lookup_for_wikilinks'] || {}
+  page.content = convert_wikilinks(page.content, lookup)
+end
+
+def convert_wikilinks(content, lookup)
+  placeholders = []
+
+  # Protect fenced code blocks
+  content = content.gsub(/^```.*?^```/m) do |block|
+    i = placeholders.length; placeholders << block; "\x00PH#{i}\x00"
+  end
+
+  # Protect display math $$...$$
+  content = content.gsub(/\$\$(.*?)\$\$/m) do
+    i = placeholders.length; placeholders << $~[0]; "\x00PH#{i}\x00"
+  end
+
+  # Protect inline math $...$
+  content = content.gsub(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/) do
+    i = placeholders.length; placeholders << $~[0]; "\x00PH#{i}\x00"
+  end
+
+  # Convert [[target|display]] and [[target]] to markdown links
+  content = content.gsub(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/) do
+    target_key = $1.strip
+    display = $2 ? $2.strip : nil
+    info = lookup[target_key] || lookup[target_key.downcase]
+    if info
+      label = display || info['title'] || target_key
+      "[#{label}](#{info['url']})"
+    else
+      display || target_key
+    end
+  end
+
+  # Restore placeholders
+  content = content.gsub(/\x00PH(\d+)\x00/) { placeholders[$1.to_i] }
+  content
 end

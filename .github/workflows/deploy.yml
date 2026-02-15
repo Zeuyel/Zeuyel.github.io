@@ -33,9 +33,18 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Build with Jekyll
-        run: bundle exec jekyll build
+        run: bundle exec jekyll build --verbose 2>&1 | tail -50
         env:
           JEKYLL_ENV: production
+
+      - name: Debug graph data
+        run: |
+          echo "=== Checking _site for graph data ==="
+          grep -l "graph_data\|graph-data" _site/**/*.html 2>/dev/null | head -5 || echo "No graph data found in HTML"
+          echo "=== Sample post HTML (graph section) ==="
+          grep -A5 "var data" _site/obsidian-features-demo/index.html 2>/dev/null || echo "No inline data found"
+          echo "=== Check if wikilinks converted ==="
+          grep -c "\[\[" _site/obsidian-features-demo/index.html 2>/dev/null && echo "WIKILINKS STILL PRESENT" || echo "Wikilinks converted OK"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
