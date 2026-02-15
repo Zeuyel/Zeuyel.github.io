@@ -276,7 +276,7 @@
 
     function hasSplitWikilinkCells(cells) {
       return Array.prototype.some.call(cells, function(cell) {
-        var text = (cell.textContent || '').trim();
+        var text = cleanCellText(cell);
         if (!text) return false;
         var hasOpen = text.indexOf('[[') !== -1;
         var hasClose = text.indexOf(']]') !== -1;
@@ -284,14 +284,52 @@
       });
     }
 
+    function cleanCellText(cell) {
+      return (cell && cell.textContent ? cell.textContent : '').replace(/\u00a0/g, ' ').trim();
+    }
+
     function hasSplitMathCells(cells) {
       if (!cells || cells.length < 2) return false;
-      var rowText = Array.prototype.map.call(cells, function(cell) {
-        return (cell.textContent || '').trim();
-      }).join('|');
-      var dollars = (rowText.match(/\$/g) || []).length;
-      if (dollars < 2) return false;
-      return rowText.indexOf('|') !== -1 && /\$[^$]*\|[^$]*\$/.test(rowText);
+      var parts = Array.prototype.map.call(cells, cleanCellText).filter(Boolean);
+      if (parts.length < 2) return false;
+      var rowText = parts.join('|');
+      if (rowText.indexOf('|') === -1) return false;
+      if (/\$[^$]*\|[^$]*\$/.test(rowText)) return true;
+      if (/\\\([^)\n]*\|[^)\n]*\\\)/.test(rowText)) return true;
+      if (/\\\[[\s\S]*?\|[\s\S]*?\\\]/.test(rowText)) return true;
+      return false;
+    }
+
+    function looksLikeAccidentalSplitTable(table) {
+      if (!table) return false;
+      if (table.querySelector('thead')) return false;
+
+      var rows = table.querySelectorAll('tr');
+      if (!rows.length) return false;
+
+      var maxCells = 0;
+      var shortCellCount = 0;
+
+      rows.forEach(function(row) {
+        var cells = row.querySelectorAll('td, th');
+        if (!cells.length) return;
+        if (cells.length > maxCells) maxCells = cells.length;
+        Array.prototype.forEach.call(cells, function(cell) {
+          var text = cleanCellText(cell);
+          if (!text) return;
+          if (text.length <= 24 && /^[A-Za-z0-9_\-\+\^\{\}\(\)\[\]\\\/=<>.,:;]+$/.test(text)) {
+            shortCellCount += 1;
+          }
+        });
+      });
+
+      if (maxCells < 2) return false;
+
+      if (table.closest('li') && maxCells >= 3) return true;
+      if (rows.length <= 2 && maxCells >= 4) return true;
+      if (shortCellCount >= 2 && maxCells >= 3) return true;
+
+      return false;
     }
 
     function replaceWikilinkTables(root) {
@@ -299,15 +337,15 @@
         var rows = table.querySelectorAll('tr');
         if (!rows.length) return;
 
-        var splitWiki = false;
+        var shouldFix = looksLikeAccidentalSplitTable(table);
         rows.forEach(function(row) {
           var cells = row.querySelectorAll('td, th');
           if (!cells.length) return;
-          if (hasSplitWikilinkCells(cells)) splitWiki = true;
-          if (hasSplitMathCells(cells)) splitWiki = true;
+          if (hasSplitWikilinkCells(cells)) shouldFix = true;
+          if (hasSplitMathCells(cells)) shouldFix = true;
         });
 
-        if (!splitWiki) return;
+        if (!shouldFix) return;
 
         var wrapper = document.createElement('div');
         wrapper.className = 'wikilink-table-fix';
@@ -315,9 +353,9 @@
         rows.forEach(function(row) {
           var cells = row.querySelectorAll('td, th');
           if (!cells.length) return;
-          var line = Array.prototype.map.call(cells, function(cell) {
-            return (cell.textContent || '').trim();
-          }).join('|').trim();
+          var parts = Array.prototype.map.call(cells, cleanCellText).filter(Boolean);
+          if (!parts.length) return;
+          var line = parts.join('|').trim();
           if (!line) return;
           var p = document.createElement('p');
           var frag = document.createDocumentFragment();
