@@ -31,6 +31,7 @@
       function addDoc(doc) {
         if (!doc || !doc.url) return;
         if (/\.(xml|txt|json|rss|atom)$/i.test(doc.url)) return;
+        if (doc.url === '/404.html' || doc.url === '/404') return;
         window.__obsidianDocs.push(doc);
       }
 
@@ -228,30 +229,78 @@
       };
     }
 
-    function replaceWikilinkTables(root) {
-      root.querySelectorAll('li > table').forEach(function(table) {
-        var cells = table.querySelectorAll('td, th');
-        if (cells.length !== 2) return;
+    function appendWikilinkText(fragment, text) {
+      var pattern = /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g;
+      var last = 0;
+      var match;
 
-        var left = (cells[0].textContent || '').trim();
-        var right = (cells[1].textContent || '').trim();
-        if (!left.startsWith('[[') || !right.endsWith(']]')) return;
-
-        var key = left.replace(/^\[\[/, '').trim();
-        var display = right.replace(/\]\]$/, '').trim();
-        if (!key) return;
-
-        var resolved = resolveWikilink(key, display);
-        var replacement;
-        if (resolved.href) {
-          replacement = document.createElement('a');
-          replacement.href = resolved.href;
-          replacement.textContent = resolved.text;
-        } else {
-          replacement = document.createTextNode(resolved.text);
+      while ((match = pattern.exec(text))) {
+        if (match.index > last) {
+          fragment.appendChild(document.createTextNode(text.slice(last, match.index)));
         }
+        var key = (match[1] || '').trim();
+        var display = match[2] ? match[2].trim() : '';
+        var resolved = resolveWikilink(key, display);
+        if (resolved.href) {
+          var a = document.createElement('a');
+          a.href = resolved.href;
+          a.textContent = resolved.text;
+          fragment.appendChild(a);
+        } else {
+          fragment.appendChild(document.createTextNode(resolved.text));
+        }
+        last = match.index + match[0].length;
+      }
 
-        table.replaceWith(replacement);
+      if (last < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(last)));
+      }
+    }
+
+    function hasSplitWikilinkCells(cells) {
+      return Array.prototype.some.call(cells, function(cell) {
+        var text = (cell.textContent || '').trim();
+        if (!text) return false;
+        var hasOpen = text.indexOf('[[') !== -1;
+        var hasClose = text.indexOf(']]') !== -1;
+        return hasOpen !== hasClose;
+      });
+    }
+
+    function replaceWikilinkTables(root) {
+      root.querySelectorAll('table').forEach(function(table) {
+        var rows = table.querySelectorAll('tr');
+        if (!rows.length) return;
+
+        var splitWiki = false;
+        rows.forEach(function(row) {
+          var cells = row.querySelectorAll('td, th');
+          if (!cells.length) return;
+          if (hasSplitWikilinkCells(cells)) splitWiki = true;
+        });
+
+        if (!splitWiki) return;
+
+        var wrapper = document.createElement('div');
+        wrapper.className = 'wikilink-table-fix';
+
+        rows.forEach(function(row) {
+          var cells = row.querySelectorAll('td, th');
+          if (!cells.length) return;
+          var line = Array.prototype.map.call(cells, function(cell) {
+            return (cell.textContent || '').trim();
+          }).join('|').trim();
+          if (!line) return;
+          var p = document.createElement('p');
+          var frag = document.createDocumentFragment();
+          appendWikilinkText(frag, line);
+          p.appendChild(frag);
+          wrapper.appendChild(p);
+        });
+
+        if (wrapper.childNodes.length) {
+          table.replaceWith(wrapper);
+        }
       });
     }
 
@@ -342,13 +391,16 @@
     var previewCache = new Map();
     var popover = document.createElement('div');
     popover.className = 'link-preview-popover';
-    popover.innerHTML = '<div class="link-preview-title"></div><div class="link-preview-excerpt"></div>';
+    popover.innerHTML = '<div class="link-preview-title"></div><div class="link-preview-body"></div>';
     document.body.appendChild(popover);
 
     var titleEl = popover.querySelector('.link-preview-title');
-    var excerptEl = popover.querySelector('.link-preview-excerpt');
+    var bodyEl = popover.querySelector('.link-preview-body');
     var hideTimer = null;
+    var showTimer = null;
     var showToken = 0;
+    var activeAnchor = null;
+    var activePath = null;
 
     function norm(url) {
       if (!url) return null;
@@ -356,7 +408,8 @@
         var u = new URL(url, window.location.origin);
         var path = (u.pathname || '/').replace(/\/+$/, '') || '/';
         if (u.origin !== window.location.origin) return null;
-        if (/\.(xml|txt|json|rss|atom)$/i.test(path)) return null;
+        if (/\.(xml|txt|json|rss|atom|pdf|png|jpe?g|gif|webp|svg|mp4|mp3|zip)$/i.test(path)) return null;
+        if (path === '/404' || path === '/404.html') return null;
         return path;
       } catch (e) {
         return null;
@@ -384,11 +437,19 @@
       popover.style.top = top + 'px';
     }
 
+    function hidePreviewNow() {
+      clearTimeout(hideTimer);
+      clearTimeout(showTimer);
+      popover.classList.remove('is-visible', 'is-loading');
+      activeAnchor = null;
+      activePath = null;
+    }
+
     function hidePreviewSoon() {
       clearTimeout(hideTimer);
       hideTimer = setTimeout(function() {
-        popover.classList.remove('is-visible');
-      }, 120);
+        hidePreviewNow();
+      }, 140);
     }
 
     function extractPreview(html, path) {
@@ -397,20 +458,45 @@
       var contentRoot = parsed.querySelector('.post-content') || parsed.querySelector('.page-content') || parsed.body;
 
       var title = titleNode ? titleNode.textContent.trim() : path;
-      var excerpt = '';
-      if (contentRoot) {
-        var paras = contentRoot.querySelectorAll('p, li');
-        for (var i = 0; i < paras.length; i++) {
-          var t = (paras[i].textContent || '').replace(/\s+/g, ' ').trim();
-          if (t.length < 24) continue;
-          excerpt = t;
-          break;
+      if (!contentRoot) {
+        return { title: title || path, html: '<p class="link-preview-empty">No preview content available.</p>' };
+      }
+
+      contentRoot.querySelectorAll('script, style, .graph-section, .backlinks, .footnotes').forEach(function(node) {
+        node.remove();
+      });
+
+      var blocks = contentRoot.querySelectorAll('h2, h3, h4, p, ul, ol, blockquote, pre, table, .callout, img');
+      var wrapper = document.createElement('div');
+      var usedChars = 0;
+      var usedBlocks = 0;
+
+      for (var i = 0; i < blocks.length; i++) {
+        var source = blocks[i];
+        var text = (source.textContent || '').replace(/\s+/g, ' ').trim();
+        var tag = source.tagName ? source.tagName.toLowerCase() : '';
+        if (!text && tag !== 'img') continue;
+
+        var clone = source.cloneNode(true);
+        if ((tag === 'p' || tag === 'li') && text.length > 280) {
+          clone.textContent = text.slice(0, 280) + '...';
         }
+
+        wrapper.appendChild(clone);
+        usedBlocks += 1;
+        usedChars += text.length;
+
+        if (usedBlocks >= 6 || usedChars >= 1100) break;
+      }
+
+      if (!wrapper.childNodes.length) {
+        var fallbackText = (contentRoot.textContent || '').replace(/\s+/g, ' ').trim();
+        wrapper.innerHTML = '<p class="link-preview-empty">' + (fallbackText ? fallbackText.slice(0, 280) + '...' : 'No preview content available.') + '</p>';
       }
 
       return {
         title: title || path,
-        excerpt: excerpt || 'No preview content available.'
+        html: wrapper.innerHTML
       };
     }
 
@@ -419,11 +505,11 @@
       var pending = fetch(path, { credentials: 'same-origin' })
         .then(function(resp) { return resp.ok ? resp.text() : ''; })
         .then(function(html) {
-          if (!html) return { title: path, excerpt: 'Unable to load preview.' };
+          if (!html) return { title: path, html: '<p class="link-preview-empty">Unable to load preview.</p>' };
           return extractPreview(html, path);
         })
         .catch(function() {
-          return { title: path, excerpt: 'Unable to load preview.' };
+          return { title: path, html: '<p class="link-preview-empty">Unable to load preview.</p>' };
         });
       previewCache.set(path, pending);
       return pending;
@@ -437,29 +523,55 @@
       return null;
     }
 
-    root.addEventListener('mouseover', function(event) {
-      var anchor = findAnchor(event.target);
-      if (!anchor) return;
-
+    function getPreviewPath(anchor) {
+      if (!anchor) return null;
       var href = anchor.getAttribute('href');
-      if (!href || href.charAt(0) === '#') return;
+      if (!href || href.charAt(0) === '#') return null;
+      if (anchor.classList.contains('reversefootnote')) return null;
       var path = norm(anchor.href);
       var current = norm(window.location.href);
-      if (!path || path === current) return;
+      if (!path || path === current) return null;
+      return path;
+    }
 
+    function showPreview(anchor, path) {
       clearTimeout(hideTimer);
+      clearTimeout(showTimer);
+      activeAnchor = anchor;
+      activePath = path;
+
       var token = ++showToken;
       titleEl.textContent = 'Loading...';
-      excerptEl.textContent = '';
-      popover.classList.add('is-visible');
+      bodyEl.innerHTML = '';
+      popover.classList.add('is-visible', 'is-loading');
       positionPopover(anchor);
 
       loadPreview(path).then(function(preview) {
         if (token !== showToken) return;
         titleEl.textContent = preview.title;
-        excerptEl.textContent = preview.excerpt;
+        bodyEl.innerHTML = preview.html;
+
+        if (typeof window.__obsidianFixWikilinks === 'function') {
+          window.__obsidianFixWikilinks(bodyEl);
+        }
+
+        popover.classList.remove('is-loading');
         positionPopover(anchor);
       });
+    }
+
+    root.addEventListener('mouseover', function(event) {
+      var anchor = findAnchor(event.target);
+      if (!anchor) return;
+
+      var path = getPreviewPath(anchor);
+      if (!path) return;
+
+      clearTimeout(hideTimer);
+      clearTimeout(showTimer);
+      showTimer = setTimeout(function() {
+        showPreview(anchor, path);
+      }, 170);
     });
 
     root.addEventListener('mouseout', function(event) {
@@ -467,20 +579,34 @@
       if (!anchor) return;
       var to = event.relatedTarget;
       if (to && popover.contains(to)) return;
+      if (to && anchor.contains(to)) return;
       hidePreviewSoon();
     });
 
     popover.addEventListener('mouseenter', function() {
       clearTimeout(hideTimer);
+      clearTimeout(showTimer);
     });
 
     popover.addEventListener('mouseleave', function() {
       hidePreviewSoon();
     });
 
+    root.addEventListener('mousemove', function(event) {
+      if (!activeAnchor) return;
+      var anchor = findAnchor(event.target);
+      if (anchor && anchor === activeAnchor) {
+        positionPopover(activeAnchor);
+      }
+    });
+
     window.addEventListener('scroll', function() {
-      popover.classList.remove('is-visible');
+      hidePreviewNow();
     }, { passive: true });
+
+    window.addEventListener('resize', function() {
+      hidePreviewNow();
+    });
   })();
   </script>
 

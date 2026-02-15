@@ -305,46 +305,91 @@
   font-size: 0.82rem;
 }
 
+.wikilink-table-fix > p {
+  margin-bottom: 0.85rem;
+}
+
+.wikilink-table-fix > p:last-child {
+  margin-bottom: 0;
+}
+
 // ── Link hover preview (Obsidian-style) ──
 .link-preview-popover {
   position: fixed;
   z-index: 40;
-  width: min(440px, calc(100vw - 16px));
-  max-height: min(70vh, 460px);
-  overflow: auto;
+  width: min(450px, calc(100vw - 16px));
+  max-height: 95vh;
+  overflow: hidden;
   background: $color-bg;
   border: 1px solid $color-border;
   border-radius: $radius-m;
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.14);
-  padding: 0.75rem 0.85rem;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.18);
+  padding: 0;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(6px) scale(0.98);
+  transform: translateY(4px);
   transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
 .link-preview-popover.is-visible {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(0) scale(1);
+  transform: translateY(0);
+}
+
+.link-preview-popover.is-loading .link-preview-body::before {
+  content: "Loading preview...";
+  display: block;
+  font-size: 0.82rem;
+  color: $color-text-muted;
+  padding: 0.2rem 0;
 }
 
 .link-preview-title {
-  font-size: 0.92rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  color: $color-text;
-  margin-bottom: 0.45rem;
+  color: $color-text-muted;
+  padding: 0.58rem 0.85rem;
+  border-bottom: 1px solid $color-border;
+  letter-spacing: 0.01em;
 }
 
-.link-preview-excerpt {
+.link-preview-body {
+  max-height: 400px;
+  overflow: auto;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: $color-text;
+}
+
+.link-preview-body > :first-child {
+  margin-top: 0;
+}
+
+.link-preview-body > :last-child {
+  margin-bottom: 0;
+}
+
+.link-preview-body h2,
+.link-preview-body h3,
+.link-preview-body h4 {
+  margin-top: 0.8rem;
+  margin-bottom: 0.35rem;
+  font-size: 1em;
+}
+
+.link-preview-body p,
+.link-preview-body ul,
+.link-preview-body ol,
+.link-preview-body blockquote {
+  margin-bottom: 0.55rem;
+}
+
+.link-preview-empty {
   font-size: 0.84rem;
-  line-height: 1.5;
   color: $color-text-muted;
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 9;
-  overflow: hidden;
+  margin: 0;
 }
 
 @media (min-width: 980px) {
@@ -358,11 +403,13 @@
   .post-main {
     order: initial;
     grid-column: 1;
+    grid-row: 1;
   }
 
   .graph-section {
     order: initial;
     grid-column: 2;
+    grid-row: 1;
     margin-top: 0;
     position: sticky;
     top: 5.3rem;
