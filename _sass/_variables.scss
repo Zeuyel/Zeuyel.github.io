@@ -1,13 +1,32 @@
-// Variables
-$color-text: #333;
-$color-bg: #fff;
-$color-accent: #0066cc;
-$color-muted: #666;
-$color-border: #e0e0e0;
+// Variables — Obsidian Publish inspired
+// Light theme
+$color-base-00: #ffffff;
+$color-base-05: #f7f7f7;
+$color-base-10: #eeeeee;
+$color-base-20: #e3e3e3;
+$color-base-25: #d5d5d5;
+$color-base-30: #b3b3b3;
+$color-base-40: #999999;
+$color-base-50: #7a7a7a;
+$color-base-60: #555555;
+$color-base-70: #333333;
+$color-base-100: #111111;
 
-$font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+$color-accent: #705dcf;
+$color-accent-hover: #5c4bb5;
+
+$color-text: $color-base-100;
+$color-text-muted: $color-base-50;
+$color-bg: $color-base-00;
+$color-bg-secondary: $color-base-05;
+$color-border: $color-base-20;
+
+$font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", "Helvetica Neue", sans-serif;
 $font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
 
-$max-width: 720px;
+$max-width: 750px;
 $bp-tablet: 600px;
 $bp-desktop: 900px;
+
+$radius-s: 4px;
+$radius-m: 8px;

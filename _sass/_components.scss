@@ -4,7 +4,7 @@
 .callout {
   border-left: 4px solid $color-accent;
   border-radius: 4px;
-  background: #f8f9fa;
+  background: $color-bg-secondary;
   margin: 1.5em 0;
   padding: 0;
   overflow: hidden;
@@ -46,7 +46,7 @@
 .callout-bug      { border-left-color: #ff5252; .callout-title { color: #ff5252; } }
 .callout-example  { border-left-color: #7c4dff; .callout-title { color: #7c4dff; } }
 .callout-quote,
-.callout-cite     { border-left-color: $color-muted; .callout-title { color: $color-muted; } }
+.callout-cite     { border-left-color: $color-text-muted; .callout-title { color: $color-text-muted; } }
 .callout-abstract,
 .callout-summary,
 .callout-tldr     { border-left-color: #00b8d4; .callout-title { color: #00b8d4; } }
@@ -119,10 +119,10 @@ details:not(.callout) {
     cursor: pointer;
     padding: 0.6em 1em;
     font-weight: 600;
-    background: #f8f8f8;
+    background: $color-bg-secondary;
 
     &:hover {
-      background: #f0f0f0;
+      background: $color-base-10;
     }
   }
 
@@ -155,7 +155,7 @@ details:not(.callout) {
 
 // ── highlight.js overrides ──
 .hljs {
-  background: #f4f4f4 !important;
-  border-radius: 4px;
+  background: $color-bg-secondary !important;
+  border-radius: $radius-m;
   padding: 1em !important;
 }

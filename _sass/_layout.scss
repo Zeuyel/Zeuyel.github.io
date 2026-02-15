@@ -1,18 +1,24 @@
-// Layout
+// Layout — Obsidian Publish style
 .container {
   max-width: $max-width;
   margin: 0 auto;
-  padding: 0 1rem;
+  padding: 0 1.5rem;
 
   @media (min-width: $bp-tablet) {
-    padding: 0 1.5rem;
+    padding: 0 2rem;
   }
 }
 
 // Header
 .site-header {
   border-bottom: 1px solid $color-border;
-  padding: 1rem 0;
+  padding: 0.8rem 0;
+  background: $color-bg;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(8px);
+  background: rgba($color-bg, 0.85);
 
   .container {
     display: flex;
@@ -28,7 +34,7 @@
 }
 
 .site-title {
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   font-weight: 700;
   color: $color-text;
   text-decoration: none;
@@ -41,23 +47,25 @@
 
 .site-nav {
   display: flex;
-  gap: 1rem;
+  gap: 1.2rem;
   flex-wrap: wrap;
 
   a {
-    color: $color-muted;
-    font-size: 0.95rem;
+    color: $color-text-muted;
+    font-size: 0.9rem;
+    font-weight: 500;
 
     &:hover,
     &.active {
       color: $color-accent;
+      text-decoration: none;
     }
   }
 }
 
 // Content
 .site-content {
-  padding: 2rem 0;
+  padding: 2.5rem 0;
   min-height: 60vh;
 }
 
@@ -65,7 +73,7 @@
 .site-footer {
   border-top: 1px solid $color-border;
   padding: 1.5rem 0;
-  color: $color-muted;
+  color: $color-text-muted;
   font-size: 0.85rem;
 }
 
@@ -75,14 +83,19 @@
   margin-bottom: 2rem;
 }
 
-.post-title,
+.post-title {
+  margin-top: 0;
+  font-size: 2em;
+  letter-spacing: -0.02em;
+}
+
 .page-title {
   margin-top: 0;
 }
 
 .post-date {
-  color: $color-muted;
-  font-size: 0.9rem;
+  color: $color-text-muted;
+  font-size: 0.85rem;
 }
 
 // Home / Post list
@@ -97,23 +110,155 @@
 
   li {
     margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid $color-border;
+
+    &:last-child {
+      border-bottom: none;
+    }
   }
 
   .post-date {
     display: block;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     margin-bottom: 0.15rem;
   }
 
   .post-link {
-    font-size: 1.1rem;
-    font-weight: 500;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: $color-text;
+
+    &:hover {
+      color: $color-accent;
+      text-decoration: none;
+    }
   }
 
   .post-excerpt {
-    color: $color-muted;
+    color: $color-text-muted;
     font-size: 0.9rem;
-    margin-top: 0.25rem;
+    margin-top: 0.3rem;
     margin-bottom: 0;
+    line-height: 1.6;
   }
+}
+
+// ── Backlinks panel ──
+.backlinks {
+  margin-top: 3em;
+  padding-top: 1.5em;
+  border-top: 1px solid $color-border;
+}
+
+.backlinks-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: $color-text-muted;
+  margin-bottom: 0.8em;
+
+  svg {
+    opacity: 0.6;
+  }
+}
+
+.backlinks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.backlink-item {
+  display: block;
+  padding: 0.4em 0.8em;
+  background: $color-bg-secondary;
+  border-radius: $radius-s;
+  font-size: 0.9rem;
+  color: $color-text;
+  transition: background 0.15s;
+
+  &:hover {
+    background: $color-base-10;
+    text-decoration: none;
+    color: $color-accent;
+  }
+}
+
+// ── Graph view ──
+.graph-section {
+  margin-top: 2em;
+  padding-top: 1.5em;
+  border-top: 1px solid $color-border;
+}
+
+.graph-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: $color-text-muted;
+  margin-bottom: 0.8em;
+
+  svg {
+    opacity: 0.6;
+  }
+}
+
+#graph-container {
+  background: $color-bg-secondary;
+  border-radius: $radius-m;
+  border: 1px solid $color-border;
+  overflow: hidden;
+
+  svg {
+    display: block;
+    width: 100%;
+  }
+}
+
+.graph-link {
+  stroke: $color-base-25;
+  stroke-width: 1.5;
+}
+
+.graph-node {
+  circle {
+    fill: $color-base-30;
+    stroke: $color-bg;
+    stroke-width: 2;
+    transition: fill 0.15s;
+  }
+
+  text {
+    fill: $color-text-muted;
+    font-size: 11px;
+    font-family: $font-body;
+    pointer-events: none;
+  }
+
+  &:hover circle {
+    fill: $color-accent;
+  }
+}
+
+.graph-node-current {
+  circle {
+    fill: $color-accent;
+  }
+
+  text {
+    fill: $color-text;
+    font-weight: 600;
+  }
+}
+
+.graph-empty {
+  text-align: center;
+  padding: 2em;
+  color: $color-text-muted;
+  font-size: 0.9rem;
 }

@@ -14,12 +14,15 @@ body {
   font-family: $font-body;
   color: $color-text;
   background: $color-bg;
-  line-height: 1.7;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 img {
   max-width: 100%;
   height: auto;
+  border-radius: $radius-s;
 }
 
 a {
@@ -27,6 +30,19 @@ a {
   text-decoration: none;
 
   &:hover {
+    color: $color-accent-hover;
     text-decoration: underline;
+  }
+}
+
+// Internal links (wikilinks rendered)
+a.wiki-link,
+a[href^="/"] {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+
+  &:hover {
+    text-decoration-style: solid;
   }
 }
