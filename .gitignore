@@ -7,3 +7,8 @@ Gemfile.lock
 # Ingore files created by npm
 node_modules
 package-lock.json
+
+# Local tooling/runtime artifacts
+.aha-loop/
+.bundle/
+.claude/
