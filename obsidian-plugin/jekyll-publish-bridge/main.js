@@ -1,12 +1,20 @@
 const { Notice, Plugin, PluginSettingTab, Setting, Modal, normalizePath } = require("obsidian");
 const fs = require("fs/promises");
 const path = require("path");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_SETTINGS = {
   targetRepoPath: "C:\\Users\\epictus\\Documents\\work\\Zeuyel.github.io",
   targetPostsDir: "_posts",
   publishFlag: "publish",
-  stripShareFlag: true
+  stripShareFlag: true,
+  pruneUnmarkedOnPublishMarked: true,
+  gitEnabled: true,
+  gitRemote: "origin",
+  gitBranch: "master",
+  gitAutoPushOnSync: false
 };
 
 module.exports = class JekyllPublishBridgePlugin extends Plugin {
@@ -98,6 +106,18 @@ module.exports = class JekyllPublishBridgePlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "sync-marked-notes",
+      name: "Sync marked notes (publish + prune unmarked exports)",
+      callback: () => this.syncMarkedNotes()
+    });
+
+    this.addCommand({
+      id: "sync-marked-notes-and-push",
+      name: "Sync marked notes and git push",
+      callback: () => this.syncMarkedNotesAndPush()
+    });
+
+    this.addCommand({
       id: "publish-current-note",
       name: "Publish current note now",
       checkCallback: (checking) => {
@@ -107,6 +127,28 @@ module.exports = class JekyllPublishBridgePlugin extends Plugin {
           this.publishOne(file).catch((err) => {
             console.error("[jekyll-publish-bridge] publish current note failed", err);
             new Notice("Publish current note failed, check console.");
+          });
+        }
+        return true;
+      }
+    });
+
+    this.addCommand({
+      id: "git-push-blog-repo",
+      name: "Git push blog repo",
+      callback: () => this.gitCommitAndPush("manual push from Obsidian")
+    });
+
+    this.addCommand({
+      id: "delete-current-note-export",
+      name: "Delete current note export from blog repo",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return false;
+        if (!checking) {
+          this.deleteExportForNote(file).catch((err) => {
+            console.error("[jekyll-publish-bridge] delete current note export failed", err);
+            new Notice("Delete export failed, check console.");
           });
         }
         return true;
@@ -226,9 +268,11 @@ module.exports = class JekyllPublishBridgePlugin extends Plugin {
 
   extractTitle(rawTitle, body, file) {
     if (rawTitle && rawTitle.trim()) return rawTitle.trim();
+    // Default to note filename to match Obsidian note identity.
+    if (file && file.basename) return file.basename;
     const heading = body.match(/^\s*#\s+(.+?)\s*$/m);
     if (heading && heading[1]) return heading[1].trim();
-    return file.basename;
+    return "Untitled";
   }
 
   buildDefaultPermalink(filePath) {
@@ -291,6 +335,29 @@ module.exports = class JekyllPublishBridgePlugin extends Plugin {
     return this.publishFiles(markedFiles, { mode: "marked" });
   }
 
+  async syncMarkedNotes() {
+    const markedFiles = this.getMarkedFiles();
+    const publishResult = markedFiles.length
+      ? await this.publishFiles(markedFiles, { mode: "marked" })
+      : { success: 0, failure: 0 };
+
+    const pruneResult = await this.pruneUnmarkedExports();
+    this.updateStatusBar();
+    new Notice(
+      `Sync done: published ${publishResult.success}, failed ${publishResult.failure}, pruned ${pruneResult.deleted}.`
+    );
+    return { publishResult, pruneResult };
+  }
+
+  async syncMarkedNotesAndPush() {
+    const syncResult = await this.syncMarkedNotes();
+    if (this.settings.gitEnabled) {
+      const pushResult = await this.gitCommitAndPush("sync marked notes from Obsidian");
+      return { syncResult, pushResult };
+    }
+    return { syncResult, pushResult: { pushed: false, reason: "git disabled" } };
+  }
+
   async publishFiles(files, options = {}) {
     const mode = options.mode || "manual";
     let success = 0;
@@ -323,6 +390,15 @@ module.exports = class JekyllPublishBridgePlugin extends Plugin {
     }
 
     new Notice(`Published ${success} notes to Jekyll.`);
+    if (mode === "marked" && this.settings.pruneUnmarkedOnPublishMarked) {
+      const pruneResult = await this.pruneUnmarkedExports();
+      if (pruneResult.deleted > 0) {
+        new Notice(`Pruned ${pruneResult.deleted} unmarked exported notes.`);
+      }
+    }
+    if (mode === "marked" && this.settings.gitEnabled && this.settings.gitAutoPushOnSync) {
+      await this.gitCommitAndPush("publish marked notes from Obsidian");
+    }
     return { success, failure };
   }
 
@@ -415,6 +491,105 @@ module.exports = class JekyllPublishBridgePlugin extends Plugin {
     }
     return results;
   }
+
+  getMarkedSourcePathSet() {
+    const markedFiles = this.getMarkedFiles();
+    return new Set(markedFiles.map((f) => normalizePath(f.path)));
+  }
+
+  async pruneUnmarkedExports() {
+    const targetRepoPath = this.settings.targetRepoPath.trim();
+    const targetPostsDir = this.settings.targetPostsDir.trim();
+    const targetDir = path.join(targetRepoPath, targetPostsDir);
+
+    const files = await this.walkMarkdownFiles(targetDir);
+    if (!files.length) return { scanned: 0, deleted: 0 };
+
+    const markedSources = this.getMarkedSourcePathSet();
+    let deleted = 0;
+
+    for (const filePath of files) {
+      try {
+        const raw = await fs.readFile(filePath, "utf8");
+        const parsed = this.splitFrontMatter(raw);
+        const source = this.readFrontMatterValue(parsed.frontMatter || "", "obsidian_source");
+        if (!source) continue;
+        const normalizedSource = normalizePath(source);
+        if (markedSources.has(normalizedSource)) continue;
+        await fs.unlink(filePath);
+        deleted += 1;
+      } catch (err) {
+        console.error("[jekyll-publish-bridge] prune unmarked export failed:", filePath, err);
+      }
+    }
+
+    return { scanned: files.length, deleted };
+  }
+
+  async findExportPathForSource(sourcePath) {
+    const targetRepoPath = this.settings.targetRepoPath.trim();
+    const targetPostsDir = this.settings.targetPostsDir.trim();
+    const targetDir = path.join(targetRepoPath, targetPostsDir);
+    const normalized = normalizePath(sourcePath);
+    return this.findExistingTargetBySource(targetDir, normalized);
+  }
+
+  async deleteExportForNote(file, options = {}) {
+    const sourcePath = normalizePath(file.path);
+    const exportPath = await this.findExportPathForSource(sourcePath);
+    if (!exportPath) {
+      if (!options.silent) {
+        new Notice(`No exported post found for: ${file.basename}`);
+      }
+      return { deleted: false, path: null };
+    }
+
+    await fs.unlink(exportPath);
+    if (!options.silent) {
+      new Notice(`Deleted export: ${path.basename(exportPath)}`);
+    }
+
+    if (this.settings.gitEnabled && options.pushAfterDelete) {
+      await this.gitCommitAndPush(`delete exported note: ${file.basename}`);
+    }
+    return { deleted: true, path: exportPath };
+  }
+
+  async runGit(args) {
+    const cwd = this.settings.targetRepoPath.trim();
+    if (!cwd) throw new Error("targetRepoPath is empty.");
+    return execFileAsync("git", args, { cwd, windowsHide: true });
+  }
+
+  async gitCommitAndPush(reason = "sync from Obsidian") {
+    if (!this.settings.gitEnabled) {
+      return { pushed: false, reason: "git disabled" };
+    }
+
+    const targetPostsDir = this.settings.targetPostsDir.trim() || "_posts";
+    const remote = (this.settings.gitRemote || "origin").trim() || "origin";
+    const branch = (this.settings.gitBranch || "master").trim() || "master";
+
+    await this.runGit(["add", "-A", "--", targetPostsDir]);
+
+    let committed = false;
+    const msg = `chore(publish): ${reason}`;
+    try {
+      await this.runGit(["commit", "-m", msg]);
+      committed = true;
+    } catch (err) {
+      const stderr = String((err && err.stderr) || "");
+      const stdout = String((err && err.stdout) || "");
+      const merged = `${stdout}\n${stderr}`.toLowerCase();
+      if (!merged.includes("nothing to commit")) {
+        throw err;
+      }
+    }
+
+    await this.runGit(["push", remote, branch]);
+    new Notice(committed ? `Git pushed to ${remote}/${branch}.` : `No content change, pushed to ${remote}/${branch}.`);
+    return { pushed: true, committed, remote, branch };
+  }
 };
 
 class PublishPanelModal extends Modal {
@@ -467,6 +642,18 @@ class PublishPanelModal extends Modal {
       await this.renderList();
     });
 
+    const syncMarkedBtn = toolbar.createEl("button", { text: "Sync marked" });
+    syncMarkedBtn.addEventListener("click", async () => {
+      await this.plugin.syncMarkedNotes();
+      await this.renderList();
+    });
+
+    const syncPushBtn = toolbar.createEl("button", { text: "Sync + Push" });
+    syncPushBtn.addEventListener("click", async () => {
+      await this.plugin.syncMarkedNotesAndPush();
+      await this.renderList();
+    });
+
     this.summaryEl = contentEl.createDiv({ cls: "jpb-summary" });
     this.listEl = contentEl.createDiv({ cls: "jpb-list" });
 
@@ -511,6 +698,7 @@ class PublishPanelModal extends Modal {
       const actionCol = row.createDiv({ cls: "jpb-col-actions" });
       const openBtn = actionCol.createEl("button", { text: "Open" });
       const publishBtn = actionCol.createEl("button", { text: "Publish" });
+      const deleteBtn = actionCol.createEl("button", { text: "Delete export" });
 
       markToggle.addEventListener("change", async () => {
         await this.plugin.setPublishFlag(file, markToggle.checked, { showNotice: false });
@@ -527,6 +715,10 @@ class PublishPanelModal extends Modal {
 
       publishBtn.addEventListener("click", async () => {
         await this.plugin.publishFiles([file], { mode: "single" });
+      });
+
+      deleteBtn.addEventListener("click", async () => {
+        await this.plugin.deleteExportForNote(file);
       });
 
       row.toggleClass("is-marked", markToggle.checked);
@@ -600,6 +792,68 @@ class JekyllPublishBridgeSettingTab extends PluginSettingTab {
           .setValue(Boolean(this.plugin.settings.stripShareFlag))
           .onChange(async (value) => {
             this.plugin.settings.stripShareFlag = Boolean(value);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Prune unmarked on Publish marked")
+      .setDesc("When publishing marked notes, delete exported notes whose source note is no longer marked.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(Boolean(this.plugin.settings.pruneUnmarkedOnPublishMarked))
+          .onChange(async (value) => {
+            this.plugin.settings.pruneUnmarkedOnPublishMarked = Boolean(value);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Enable git push in plugin")
+      .setDesc("Allow plugin to run git add/commit/push in target blog repo.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(Boolean(this.plugin.settings.gitEnabled))
+          .onChange(async (value) => {
+            this.plugin.settings.gitEnabled = Boolean(value);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Git remote")
+      .setDesc("Remote name used for push.")
+      .addText((text) =>
+        text
+          .setPlaceholder("origin")
+          .setValue(this.plugin.settings.gitRemote || "origin")
+          .onChange(async (value) => {
+            this.plugin.settings.gitRemote = value.trim() || "origin";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Git branch")
+      .setDesc("Branch name used for push.")
+      .addText((text) =>
+        text
+          .setPlaceholder("master")
+          .setValue(this.plugin.settings.gitBranch || "master")
+          .onChange(async (value) => {
+            this.plugin.settings.gitBranch = value.trim() || "master";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Auto push on Publish marked")
+      .setDesc("After Publish marked, automatically git push target posts directory.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(Boolean(this.plugin.settings.gitAutoPushOnSync))
+          .onChange(async (value) => {
+            this.plugin.settings.gitAutoPushOnSync = Boolean(value);
             await this.plugin.saveSettings();
           })
       );

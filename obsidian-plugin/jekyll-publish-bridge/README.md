@@ -4,7 +4,7 @@ Obsidian desktop plugin with visual workflow:
 
 1. Mark notes with frontmatter flag (default: `publish: true`)
 2. Use panel/buttons inside Obsidian to publish selected notes into your Jekyll repo `_posts`
-3. Push blog repo to trigger CI deploy
+3. Optional: sync + prune + git push directly from the plugin
 
 ## UI Entry Points
 
@@ -20,7 +20,11 @@ Obsidian desktop plugin with visual workflow:
 - `Open publish panel`
 - `Toggle publish flag for current note`
 - `Publish all marked notes`
+- `Sync marked notes (publish + prune unmarked exports)`
+- `Sync marked notes and git push`
 - `Publish current note now`
+- `Git push blog repo`
+- `Delete current note export from blog repo`
 
 ## Install into your vault
 
@@ -46,3 +50,12 @@ Then in Obsidian:
   - `layout: post`
   - `graph: true`
   - `obsidian_source`
+- Optional cleanup behavior:
+  - `Sync marked` in panel will publish current marked notes and remove exported files whose source note is no longer marked.
+  - `Publish all marked notes` can also prune unmarked exports when setting `Prune unmarked on Publish marked` is enabled.
+- Edit sync behavior:
+  - If an already published note is edited, running `Publish` / `Publish marked` / `Sync marked` will overwrite the existing exported file matched by `obsidian_source`.
+  - If frontmatter `title` is missing, exported `title` defaults to the Obsidian note filename (not first H1), to keep URL/title identity stable.
+- Git behavior:
+  - Plugin can run `git add -A -- <targetPostsDir>`, `git commit`, and `git push`.
+  - Configure `Enable git push in plugin`, `Git remote`, and `Git branch` in settings.
